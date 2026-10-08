@@ -1,0 +1,62 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python-postgres:
+    name: Pure contracts and PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: living
+          POSTGRES_USER: living
+          POSTGRES_PASSWORD: living_test_password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U living -d living"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    env:
+      LIVING_TEST_DATABASE_URL: postgresql://living:living_test_password@127.0.0.1:5432/living
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Syntax and pure contracts
+        run: |
+          python -m compileall -q core tests contracts interfaces scripts
+          python -m unittest discover -s tests -p 'test_engine_*.py' -v
+          python contracts/test_contracts.py
+      - name: PostgreSQL-backed tests (mandatory)
+        run: |
+          python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
+  nix:
+    name: Nix package build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v17
+      - name: Evaluate and build livingd
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' flake lock
+          nix --extra-experimental-features 'nix-command flakes' build --no-link .#livingd
+      - name: Commit pinned flake lock on the import branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/living-vertical-slice'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "build: pin Nix dependency versions"
+            git push origin HEAD:feat/living-vertical-slice
+          fi
