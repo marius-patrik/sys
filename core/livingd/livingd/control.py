@@ -40,6 +40,8 @@ def register_capability(db,principal:dict,data:dict)->dict:
     if not set(grants)<=set(principal["grants"]):raise PermissionError("requested capability escalates privileges")
     row=db.execute("SELECT max(revision) version FROM capability_registry WHERE id=%s",(name,)).fetchone()
     expected=(row["version"] or 0)+1
+    if row["version"] is not None and "revision" not in data:
+        raise ValueError("an explicit revision is required to publish an update")
     version=data.get("revision",expected)
     if version!=expected:raise ValueError("capability revision must be next version")
     db.execute("""
