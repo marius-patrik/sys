@@ -39,6 +39,14 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
           python -m unittest discover -s tests -p 'test_full_system.py' -v
+      - name: Live HTTP smoke test against PostgreSQL
+        run: |
+          export LIVING_DATABASE_URL="$LIVING_TEST_DATABASE_URL"
+          export LIVING_DEV_MODE=1 LIVING_MIGRATE_ON_BOOT=1
+          PYTHONPATH=core/livingd python -m livingd serve --listen 127.0.0.1:8080 > /tmp/livingd.log 2>&1 &
+          CORE_PID=$!
+          trap 'kill "$CORE_PID" 2>/dev/null || true; cat /tmp/livingd.log' EXIT
+          python scripts/smoke.py
       - name: DSH bundle syntax
         run: node --check plugins/dsh/living/index.js
       - name: DSH node bridge contract

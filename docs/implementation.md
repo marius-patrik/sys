@@ -20,3 +20,12 @@ CI uses a real PostgreSQL service and a deterministic fake DSH model endpoint. A
 ## Test
 
 Run `python -m unittest discover -s tests -p 'test_full_system.py' -v` with `LIVING_TEST_DATABASE_URL` set, or review GitHub Actions logs for the PostgreSQL integration job.
+## Live smoke test
+
+With the development core running, use `python scripts/smoke.py`. The same test runs in CI with real PostgreSQL and verifies HTTP, memory, graph composition, the Control catalog, MCP and web serving.
+
+## Real DSH model node
+
+Install upstream DeepSeek Harness and configure a provider/model in its DSH profile. Install the sole `plugins/dsh/living` bundle with the documented `dsh plugin --profile <profile> add <path>` command. Configure `LIVING_DSH_TOKEN`, `LIVING_DSH_PORT=8090`, `LIVING_DSH_PROVIDER`, and `LIVING_DSH_MODEL`. Start that DSH profile. Set `LIVING_DSH_URL` and the same token in the core. The plugin calls `ctx.llm.stream()` directly; no DSH React-loop step selects graph nodes.
+
+CI uses a fake DSH LLM provider to test the plugin and a mock HTTP server to test core-to-bridge requests. Real model-provider integration is not yet verified without actual provider configuration.
