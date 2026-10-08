@@ -56,6 +56,56 @@ function component(def,catalog){
        target.append(b)
      }
    }).catch(error=>target.textContent=error.message)
+ }else if(type==="form" && typeof def.endpoint==="string"){
+    const form=node("form");const inputs={};
+    for(const field of def.fields||[]){
+      const label=node("label",field.label||field.name);
+      const input=node("input");
+      input.type=field.type||"text";input.name=field.name;
+      input.required=Boolean(field.required);
+      input.autocomplete=field.type==="password"?"off":"on";
+      input.style.display="block";input.style.width="95%";
+      label.append(input);form.append(label);inputs[field.name]=input;
+    }
+    const submit=node("button","Save configuration");submit.type="submit";form.append(submit);
+    form.onsubmit=async e=>{
+      e.preventDefault();
+      const payload={};
+      for(const [name,input] of Object.entries(inputs)){
+        if(input.value!==""||input.required)payload[name]=input.value;
+      }
+      try{
+        const result=await api(def.endpoint,{method:"POST",
+          headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+        for(const f of def.fields||[])if(f.type==="password")inputs[f.name].value="";
+        byId("status").textContent="Configuration saved · "+JSON.stringify(result)
+      }catch(error){byId("status").textContent=error.message}
+    };
+    section.append(form);
+ }else if(type==="model-picker"){
+    const target=node("div");section.append(target);
+    Promise.all([api(def.models),api(def.selection)]).then(([models,selected])=>{
+      for(const purpose of ["default","answer","compose"]){
+        const form=node("form");form.append(node("label",purpose+" model "));
+        const select=node("select");select.style.maxWidth="100%";
+        for(const model of models.data||[]){
+          const option=node("option",model.id);option.value=model.id;
+          if(selected.selected?.[purpose]===model.id)option.selected=true;
+          select.append(option)
+        }
+        form.append(select);const submit=node("button","Select");submit.type="submit";form.append(submit);
+        form.onsubmit=async event=>{
+          event.preventDefault();
+          try{
+            const answer=await api(def.endpoint,{method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({purpose,model:select.value})});
+            byId("status").textContent="Model policy saved · "+JSON.stringify(answer.selected)
+          }catch(error){byId("status").textContent=error.message}
+        };
+        target.append(form)
+      }
+    }).catch(error=>target.append(node("small",error.message)));
  }else if(type==="table" && typeof def.source==="string"){
    const target=node("div");target.className="rows";section.append(target);
    api("/v1/control/data/"+encodeURIComponent(def.source)).then(data=>{
@@ -88,5 +138,5 @@ async function render(){
  }catch(error){byId("status").textContent=error.message}
 }
 byId("input").onsubmit=e=>{e.preventDefault();invoke("/v1/inputs",byId("text").value).then(render).catch(error=>byId("status").textContent=error.message)}
-render();setInterval(render,5000);
+render();setInterval(render,30000);
 </script></body></html>

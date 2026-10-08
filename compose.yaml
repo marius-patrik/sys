@@ -7,10 +7,11 @@ services:
     image: living-core:v0.28-dev
     environment:
       LIVING_DATABASE_URL_FILE: /run/secrets/living_database_url
+      LIVING_SEAL_KEY_FILE: /run/secrets/living_seal_key
       LIVING_LISTEN: 0.0.0.0:8080
       LIVING_DEV_MODE: "1"
       LIVING_MIGRATE_ON_BOOT: "1"
-    secrets: [living_database_url]
+    secrets: [living_database_url, living_seal_key]
     user: "10001:10001"
     read_only: true
     tmpfs:
@@ -24,3 +25,5 @@ services:
 secrets:
   living_database_url:
     file: ./.private/living_database_url
+  living_seal_key:
+    file: ./.private/living_seal_key

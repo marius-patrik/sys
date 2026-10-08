@@ -17,9 +17,9 @@ PYTHONPATH=core/livingd python3 -m livingd serve
 
 Open http://127.0.0.1:8080 for the generic GUI, run python interfaces/tui/living.py for a TUI, or use interfaces/cli/living.py. The same action catalog is exposed over POST /mcp.
 
-Try `remember apples are fruit`, then `recall apples`. Asking a general question requires a configured DSH node bridge (LIVING_DSH_URL and LIVING_DSH_TOKEN). The single DSH plugin lives at plugins/dsh/living.
+Try `remember apples are fruit`, then `recall apples`. Questions use the models advertised by the configured LiteLLM gateway, never a locally hardcoded model list. Configure the gateway and select models through the dynamically rendered LiteLLM settings and model views in the GUI, or the API below.
 
-Graph proposals, automatic observation-to-memory-candidate routing, human approval, and scoped evidence-linked memory are implemented. An optional independent OCI broker executes Python without network or mounted filesystems; it must run against a separately provisioned worker engine. Production authentication and open-ended autonomous learning are not implemented. Model requests fail visibly when DSH is unavailable.
+Graph proposals, automatic observation-to-memory-candidate routing, human approval, and scoped evidence-linked memory are implemented. An optional independent OCI broker executes Python without network or mounted filesystems; it must run against a separately provisioned worker engine. Production authentication and open-ended autonomous learning are not implemented. Model requests fail visibly when LiteLLM is unavailable or unconfigured.
 
 ## Test the full development workflow
 
@@ -28,9 +28,29 @@ Graph proposals, automatic observation-to-memory-candidate routing, human approv
 3. Send an observed fact via `living observe ...`. The memory-attention graph records a candidate, inspectable at `GET /v1/memory/candidates`.
 4. Approve the candidate with `living.approve-memory` using its UUID, then retrieve it as scoped memory.
 5. Submit `compose explain this system`. A safe graph is validated and published as a new dynamic Control action, visible to CLI/TUI/GUI/MCP without editing the clients.
-6. With a DSH bridge connected, ask a question to exercise memory→DSH model→view nodes.
+6. Configure LiteLLM and choose an advertised model; ask a question to exercise memory → LiteLLM model → view nodes.
 
-Optional physical Python workers run in `workers/oci/broker.py`, with `LIVING_WORKER_TOKEN` (at least 12 characters) and a Docker daemon dedicated to untrusted workloads. Start the broker locally, set `LIVING_WORKER_URL=http://127.0.0.1:8091` and the same token for `livingd`, then invoke `living.python` with Python source. Do not expose either development API or broker publicly.
+Optional physical Python workers run in `workers/oci/broker.py` on a dedicated Docker engine. The broker accepts a bootstrap token, but `livingd` reads its corresponding `worker.token` from the encrypted PostgreSQL credential table. Configure it using the local-only settings API before invoking `living.python`. Do not expose either development service publicly.
+
+## LiteLLM and credential setup
+
+The local bootstrap script also creates `.private/living_seal_key`, which is mounted into the core container. It is an encryption root, **not** a provider credential. PostgreSQL holds the encrypted LiteLLM virtual key and the selected model IDs. The database connection credential and the encryption root must necessarily be available before PostgreSQL credentials can be read.
+
+The local-only configuration API accepts these calls (do not commit keys):
+
+```sh
+curl -sS http://127.0.0.1:8080/v1/settings/litellm \
+  -H 'Content-Type: application/json' \
+  -d "{\"base_url\":\"http://litellm:4000\",\"api_key\":\"$LITELLM_VIRTUAL_KEY\"}"
+curl -sS http://127.0.0.1:8080/v1/models
+curl -sS http://127.0.0.1:8080/v1/models/selection \
+  -H 'Content-Type: application/json' \
+  -d '{"purpose":"answer","model":"YOUR_DISCOVERED_MODEL_ID"}'
+```
+
+The key is AES-256-GCM encrypted with per-record random nonces and scope/name binding before storage. GET endpoints return only metadata, never secret bytes. Do **not** expose this unauthenticated development server beyond loopback or use a shared public host. The key is used only to authenticate with LiteLLM; upstream provider secrets belong to LiteLLM.
+
+For a separate local worker broker, store its bootstrap token through `POST /v1/settings/credentials/worker` using `{"token":"..."}`; the broker itself still needs that token supplied securely at startup.
 
 ## Testing
 

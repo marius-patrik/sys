@@ -1,4 +1,4 @@
-"""One graph-node dispatcher. DSH is the model provider, not an agent loop."""
+"""Graph node dispatcher; model inventory and inference come from LiteLLM."""
 from __future__ import annotations
 import json
 import os
@@ -8,23 +8,17 @@ from .logic import execute_pure
 from .memory import context,normalize
 from .composer import dispatch, propose
 
-def model(question:str,ctx:str)->str:
-    bridge=os.getenv("LIVING_DSH_URL","").rstrip("/")
-    if not bridge:
-        raise RuntimeError("DSH node bridge unavailable: configure LIVING_DSH_URL")
-    if not bridge.startswith(("http://127.0.0.1:","http://localhost:","https://","http://dsh:")):
-        raise RuntimeError("refusing unapproved model bridge URL")
-    request=urllib.request.Request(
-      bridge+"/v1/nodes/model",
-      data=json.dumps({"question":question,"context":ctx,"model":os.getenv("LIVING_MODEL","default")}).encode(),
-      headers={"Content-Type":"application/json",
-               "Authorization":"Bearer "+os.getenv("LIVING_DSH_TOKEN","local-dev-only")},
-      method="POST")
-    with urllib.request.urlopen(request,timeout=45) as response:
-        result=json.load(response)
-    if not isinstance(result,dict) or not isinstance(result.get("text"),str):
-        raise RuntimeError("DSH bridge returned invalid model output")
-    return result["text"][:12000]
+from .models import generate,read_credential
+
+def model(question:str,ctx:str,scope:str="dev",purpose:str="answer")->str:
+    return generate(scope,purpose,question,ctx)
+
+def _worker_key(scope:str)->str:
+    with connect() as db:
+        secret=read_credential(db,scope,"worker.token")
+    if not secret:
+        raise RuntimeError("worker broker credential not stored in PostgreSQL")
+    return secret
 
 def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
     if capability=="memory.attend":
@@ -60,7 +54,7 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
         return {"view":{"type":"progress","value":"Dispatched to "+action},
                 "_dispatch":{"action_id":action,"text":text}}
     if capability=="graph.compose":
-        return {"value":"Graph proposal validated.","_proposal":propose(scope,args["value"],generate=model)}
+        return {"value":"Graph proposal validated.","_proposal":propose(scope,args["value"],generate=lambda q,c: model(q,c,scope,"compose"))}
     if capability=="program.python":
         bridge=os.getenv("LIVING_WORKER_URL","").rstrip("/")
         if not bridge:
@@ -70,7 +64,7 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
         req=urllib.request.Request(bridge+"/v1/execute",
             data=json.dumps({"language":"python","code":args["code"]}).encode(),
             headers={"Content-Type":"application/json",
-                     "Authorization":"Bearer "+os.getenv("LIVING_WORKER_TOKEN","local-dev-only")},
+                     "Authorization":"Bearer "+_worker_key(scope)},
             method="POST")
         with urllib.request.urlopen(req,timeout=25) as response:
             result=json.load(response)
@@ -80,5 +74,5 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
             raise RuntimeError("OCI program failed: "+str(result.get("stderr",""))[:700])
         return {"value":result["stdout"][:12000]}
     if capability=="model.answer":
-        return {"value":model(args["question"],args["context"])}
+        return {"value":model(args["question"],args["context"],scope,"answer")}
     return execute_pure(capability,args)

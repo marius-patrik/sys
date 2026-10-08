@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from .database import connect, migrate, seed
 from .engine import ingest, tick
 from .mcp import handle as handle_mcp
+from .models import configure_gateway,gateway_status,list_models,select_model,selection,ModelGatewayError
 
 LOG = logging.getLogger('livingd')
 
@@ -37,6 +38,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = self.read_payload()
+            if self.path == '/v1/settings/litellm':
+                with connect() as db:
+                    result=configure_gateway(db,'dev',body.get('base_url'),
+                                             body.get('api_key'),body.get('clear_key',False))
+                return self.respond(200,result)
+            if self.path == '/v1/settings/credentials/worker':
+                from .models import put_credential
+                value=body.get('token')
+                with connect() as db:
+                    put_credential(db,'dev','worker.token',value)
+                return self.respond(200,{'stored':True,'name':'worker.token'})
+            if self.path == '/v1/models/selection':
+                with connect() as db:
+                    result=select_model(db,'dev',body.get('purpose'),body.get('model'))
+                return self.respond(200,{'selected':result})
             if self.path == '/mcp':
                 reply=handle_mcp(body)
                 if reply is None:
@@ -57,6 +73,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self.respond(404,{'error':'not found'})
             return self.respond(202,{'event_id':event,'status':'accepted','lookup':'/v1/events/'+str(event)})
+        except ModelGatewayError as exc:
+            return self.respond(503,{'error':str(exc)})
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             return self.respond(400,{'error':str(exc)})
         except Exception:
@@ -64,6 +82,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(500,{'error':'internal error'})
     def do_GET(self):
         try:
+            if self.path == '/v1/settings/litellm':
+                with connect() as db:result=gateway_status(db,'dev')
+                return self.respond(200,result)
+            if self.path == '/v1/models':
+                with connect() as db:result=list_models(db,'dev')
+                return self.respond(200,{'data':result})
+            if self.path == '/v1/models/selection':
+                with connect() as db:result=selection(db,'dev')
+                return self.respond(200,{'selected':result})
             if self.path in ('/','/index.html'):
                 source=Path(os.getenv("LIVING_WEB_PATH",str(Path(__file__).resolve().parents[3]/"interfaces/web/index.html")))
                 if not source.is_file():return self.respond(404,{'error':'web interface not installed'})
@@ -133,6 +160,8 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(1)
                 return
             return self.respond(404,{'error':'not found'})
+        except ModelGatewayError as exc:
+            return self.respond(503,{'error':str(exc)})
         except BrokenPipeError:
             return
         except (ValueError,TypeError):
