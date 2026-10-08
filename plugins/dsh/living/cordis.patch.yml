@@ -1,3 +1,8 @@
+# Disable stock ReAct scheduling in the Living profile. livingd is the sole
+# graph scheduler; DSH contributes its guarded tool registry only.
+- id: agent-loop
+  disabled: true
+
 - insert:
     - id: living-node-bridge
       name: dsh-living
