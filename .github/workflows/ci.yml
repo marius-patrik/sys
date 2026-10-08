@@ -67,6 +67,12 @@ jobs:
         run: |
           nix --extra-experimental-features 'nix-command flakes' flake lock
           nix --extra-experimental-features 'nix-command flakes' build --no-link .#livingd
+          nix --extra-experimental-features 'nix-command flakes' build --no-link .#coreImage
+      - name: Load and boot the packaged OCI entrypoint
+        run: |
+          IMAGE_TAR="$(nix --extra-experimental-features 'nix-command flakes' build --print-out-paths --no-link .#coreImage)"
+          docker load -i "$IMAGE_TAR"
+          docker run --rm living-core:v0.28-dev --help
       - name: Commit pinned flake lock on the import branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/feat/living-vertical-slice'
         run: |
