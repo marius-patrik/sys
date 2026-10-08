@@ -48,17 +48,40 @@ class Handler(BaseHTTPRequestHandler):
             scope=principal['scope_id']
             body = self.read_payload()
             if self.path == '/v1/settings/litellm':
+                need(principal,'control.admin')
                 with connect() as db:
                     result=configure_gateway(db,scope,body.get('base_url'),
                                              body.get('api_key'),body.get('clear_key',False))
                 return self.respond(200,result)
             if self.path == '/v1/settings/credentials/worker':
+                need(principal,'control.admin')
                 from .models import put_credential
                 value=body.get('token')
                 with connect() as db:
                     put_credential(db,scope,'worker.token',value)
                 return self.respond(200,{'stored':True,'name':'worker.token'})
+            if self.path == '/v1/settings/bridges/dsh':
+                need(principal,'control.admin')
+                from .models import put_credential
+                url=body.get('base_url')
+                secret=body.get('token')
+                if not isinstance(url,str) or not (
+                    url.startswith('https://') or url.startswith('http://127.0.0.1:')
+                    or url.startswith('http://localhost:') or url.startswith('http://dsh:')):
+                    raise ValueError('invalid DSH bridge URL')
+                if not isinstance(secret,str) or len(secret)<12:raise ValueError('invalid DSH bridge token')
+                with connect() as db:
+                    put_credential(db,scope,'dsh.bridge_key',secret)
+                    db.execute("""
+                      INSERT INTO integration_endpoints(scope_id,service,base_url,credential_name)
+                      VALUES(%s,'dsh',%s,'dsh.bridge_key')
+                      ON CONFLICT(scope_id,service) DO UPDATE SET
+                        base_url=EXCLUDED.base_url,credential_name=EXCLUDED.credential_name,
+                        revision=integration_endpoints.revision+1,updated_at=now()
+                    """,(scope,url.rstrip('/')))
+                return self.respond(200,{'configured':True,'service':'dsh'})
             if self.path == '/v1/models/selection':
+                need(principal,'control.admin')
                 with connect() as db:
                     result=select_model(db,scope,body.get('purpose'),body.get('model'))
                 return self.respond(200,{'selected':result})
