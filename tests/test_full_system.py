@@ -114,6 +114,17 @@ class FullSystemIntegration(unittest.TestCase):
             self.assertIn("Graph revision composed.",state["result"]["view"]["value"])
             count=db.execute("SELECT count(*) AS n FROM graph_proposals").fetchone()["n"]
             self.assertGreater(count,0)
+            published=db.execute("SELECT id FROM control_actions WHERE id LIKE 'living.composed.%' ORDER BY id LIMIT 1").fetchone()
+            self.assertIsNotNone(published)
+            published_id=published["id"]
+        names=[a["name"] for a in handle({"jsonrpc":"2.0","id":7,"method":"tools/list"})["result"]["tools"]]
+        self.assertIn(published_id,names)
+        new_eid=handle({"jsonrpc":"2.0","id":9,"method":"tools/call",
+           "params":{"name":published_id,"arguments":{"text":"What is a database?"}}})["result"]["structuredContent"]["event_id"]
+        self.pump()
+        with connect() as db:
+            new_run=db.execute("SELECT state FROM activations WHERE event_id=%s",(new_eid,)).fetchone()
+        self.assertEqual(new_run["state"],"completed")
         result=handle({"jsonrpc":"2.0","id":3,"method":"resources/list"})["result"]["resources"]
         self.assertTrue(result)
         self.assertEqual(handle({"jsonrpc":"2.0","id":4,"method":"initialize"})["result"]["serverInfo"]["name"],"living-sys")

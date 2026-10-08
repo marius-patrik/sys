@@ -36,7 +36,7 @@ def execute(capability:str,args:dict,scope:str)->dict:
         return {"view":{"type":"progress","value":"Dispatched to "+action},
                 "_dispatch":{"action_id":action,"text":text}}
     if capability=="graph.compose":
-        return {"value":"Graph proposal validated.","_proposal":propose(scope,args["value"])}
+        return {"value":"Graph proposal validated.","_proposal":propose(scope,args["value"],generate=model)}
     if capability=="model.answer":
         return {"value":model(args["question"],args["context"])}
     return execute_pure(capability,args)
