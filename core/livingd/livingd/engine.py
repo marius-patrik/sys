@@ -102,15 +102,15 @@ def deliver_once() -> bool:
             return True
         activation_id=uuid.uuid5(uuid.NAMESPACE_URL,f"living:{row['event_id']}:{row['subscription_id']}:{row['subscription_revision']}")
         db.execute("""
-            INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs,principal_id,grants,root_event_id)
+            INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs,principal_id,grants,root_event_id,capability_pins)
             VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,
                 (WITH RECURSIVE chain AS (
                     SELECT id,causation_event_id FROM events WHERE id=%s
                     UNION ALL SELECT e.id,e.causation_event_id FROM events e JOIN chain c ON e.id=c.causation_event_id
-                ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1))
+                ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1)),%s::jsonb
             ON CONFLICT DO NOTHING
         """,(activation_id,row["event_id"],row["target_graph_revision"],row["scope_id"],
-              json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"]))
+              json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"],json.dumps({n["capability"]:manifest[n["capability"]] for n in graph["definition"]["nodes"]})))
         db.execute("""
             UPDATE event_deliveries SET state='done',activation_id=%s
             WHERE event_id=%s AND subscription_id=%s AND subscription_revision=%s
@@ -122,14 +122,14 @@ def _claim_node():
     """Claim exactly one ready node; no external work is done in the transaction."""
     with connect() as db:
         activations = db.execute("""
-            SELECT a.id, a.graph_revision, a.inputs, a.scope_id, a.event_id,a.grants, g.definition
+            SELECT a.id, a.graph_revision, a.inputs, a.scope_id, a.event_id,a.grants,a.capability_pins, g.definition
             FROM activations a JOIN graph_revisions g ON g.id=a.graph_revision
             WHERE a.state IN ('pending','running')
             ORDER BY a.created_at, a.id LIMIT 32 FOR UPDATE OF a SKIP LOCKED
         """).fetchall()
         for a in activations:
             g = a["definition"]
-            manifest=catalog(db)
+            manifest=a["capability_pins"] or catalog(db)
             validate_graph(g,manifest)
             rows = db.execute("SELECT node_id, state, lease_epoch, lease_until,next_attempt_at,result,attempts FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
             done = {r["node_id"] for r in rows if r["state"] == "completed"}

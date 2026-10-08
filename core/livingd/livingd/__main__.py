@@ -62,6 +62,17 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as db:
                     result=select_model(db,scope,body.get('purpose'),body.get('model'))
                 return self.respond(200,{'selected':result})
+            if self.path.startswith('/v1/control/handles/') and self.path.endswith('/cancel'):
+                path=self.path[len('/v1/control/handles/'):-len('/cancel')].strip('/')
+                activation_id=uuid.UUID(path)
+                with connect() as db:
+                    row=db.execute("""
+                      UPDATE activations SET state='cancelled',cancelled_at=now(),updated_at=now()
+                      WHERE id=%s AND scope_id=%s AND state IN ('pending','running','suspended')
+                      RETURNING id
+                    """,(activation_id,scope)).fetchone()
+                if not row:return self.respond(404,{'error':'activation not found or already terminal'})
+                return self.respond(200,{'id':activation_id,'state':'cancelled'})
             if self.path == '/mcp':
                 reply=handle_mcp(body,principal)
                 if reply is None:
@@ -140,6 +151,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/v1/control/catalog':
                 with connect() as db:
                     actions=db.execute('SELECT id,title,graph_revision,input_name,revision FROM control_actions WHERE enabled ORDER BY id').fetchall()
+                    graph_rows=db.execute("SELECT id,definition FROM graph_revisions WHERE id=ANY(%s)",([a['graph_revision'] for a in actions],)).fetchall()
+                    graphs={r['id']:r['definition'] for r in graph_rows}
+                    manifest=catalog(db)
+                grants=set(principal['grants'])
+                actions=[a for a in actions if all(
+                    n['capability'] in manifest and set(manifest[n['capability']]['grants'])<=grants
+                    for n in graphs.get(a['graph_revision'],{}).get('nodes',[]))]
                 return self.respond(200,{'actions':[{'id':a['id'],'title':a['title'],'revision':a['revision'],
                    'inputSchema':{'type':'object','properties':{a['input_name']:{'type':'string'}},'required':[a['input_name']]},
                    'invoke':'/v1/control/actions/'+a['id']} for a in actions]})
