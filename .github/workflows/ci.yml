@@ -41,6 +41,8 @@ jobs:
   nix:
     name: Nix package build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v17
@@ -48,3 +50,13 @@ jobs:
         run: |
           nix --extra-experimental-features 'nix-command flakes' flake lock
           nix --extra-experimental-features 'nix-command flakes' build --no-link .#livingd
+      - name: Commit pinned flake lock on the import branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/living-vertical-slice'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "build: pin Nix dependency versions"
+            git push origin HEAD:feat/living-vertical-slice
+          fi
