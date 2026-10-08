@@ -235,6 +235,48 @@ class CorrectnessTests(unittest.TestCase):
         final=request("tasks/get",{"taskId":pending},task_name=pending)["result"]
         self.assertEqual(final["status"],"cancelled")
 
+    def test_fresh_process_recovers_committed_work(self):
+        import subprocess
+        from livingd.engine import ingest
+        from livingd.database import connect
+        self.drain()
+        marker="cold"+uuid.uuid4().hex
+        event=ingest("control.action","reliability",marker,"dev",
+                     {"action_id":"living.upper","text":"restarted"})
+        env=dict(os.environ)
+        env["LIVING_DATABASE_URL"]=env["LIVING_TEST_DATABASE_URL"]
+        env["PYTHONPATH"]=str(Path(__file__).resolve().parents[1]/"core"/"livingd")
+        for _ in range(15):
+            p=subprocess.run([sys.executable,"-m","livingd","tick"],env=env,
+                             capture_output=True,text=True,timeout=10)
+            self.assertEqual(p.returncode,0,p.stderr)
+            with connect() as db:
+                row=db.execute("SELECT state,result FROM activations WHERE event_id=%s",(event,)).fetchone()
+            if row and row["state"]=="completed":break
+        self.assertIsNotNone(row)
+        self.assertEqual(row["state"],"completed")
+        self.assertEqual(row["result"]["view"]["value"],"RESTARTED")
+
+    def test_parallel_workers_avoid_duplicate_accepted_nodes(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from livingd.engine import ingest,tick
+        from livingd.database import connect
+        self.drain()
+        events=[ingest("control.action","parallel-test",uuid.uuid4().hex,"dev",
+                 {"action_id":"living.upper","text":"parallel"+str(i)}) for i in range(12)]
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            for _ in range(50):
+                list(executor.map(lambda _: tick(),range(6)))
+        with connect() as db:
+            rows=db.execute("""
+              SELECT a.state,a.result,
+                (SELECT count(*) FROM node_runs n WHERE n.activation_id=a.id) AS nodes
+              FROM activations a WHERE a.event_id=ANY(%s)
+            """,(events,)).fetchall()
+        self.assertEqual(len(rows),len(events))
+        self.assertTrue(all(row["state"]=="completed" for row in rows),rows)
+        self.assertTrue(all(row["nodes"]==2 for row in rows))
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect
