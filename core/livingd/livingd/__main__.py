@@ -97,6 +97,44 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as db:
                     result=select_model(db,scope,body.get('purpose'),body.get('model'))
                 return self.respond(200,{'selected':result})
+            if self.path.startswith('/v1/control/effects/') and self.path.endswith('/reconcile'):
+                need(principal,'control.admin')
+                effect_id=uuid.UUID(self.path[len('/v1/control/effects/'):-len('/reconcile')].strip('/'))
+                outcome=body.get('outcome')
+                result=body.get('result')
+                if outcome not in ('committed','not_executed'):
+                    raise ValueError('outcome must be committed or not_executed')
+                with connect() as db:
+                    effect=db.execute("""
+                      SELECT ef.id,ef.activation_id,ef.node_id,ef.capability_id,
+                             a.capability_pins,a.scope_id
+                      FROM execution_effects ef JOIN activations a ON a.id=ef.activation_id
+                      WHERE ef.id=%s AND ef.state='uncertain' AND a.scope_id=%s FOR UPDATE OF ef
+                    """,(effect_id,scope)).fetchone()
+                    if effect is None:return self.respond(404,{'error':'uncertain effect not found'})
+                    if outcome=='committed':
+                        contract=effect["capability_pins"][effect["capability_id"]]["out"]
+                        if not isinstance(result,dict) or set(result)!=set(contract):
+                            raise ValueError('reconciliation result does not match output schema')
+                        if any(not isinstance(result[port],str) for port,kind in contract.items() if kind=='text'):
+                            raise ValueError('reconciliation text output must be string')
+                        db.execute("UPDATE node_runs SET state='completed',result=%s::jsonb,error=NULL WHERE activation_id=%s AND node_id=%s AND state='uncertain'",
+                                   (json.dumps(result),effect["activation_id"],effect["node_id"]))
+                        db.execute("UPDATE activations SET state='running',updated_at=now() WHERE id=%s AND state='suspended'",
+                                   (effect["activation_id"],))
+                        db.execute("UPDATE execution_effects SET state='reconciled',result=%s::jsonb,updated_at=now() WHERE id=%s",
+                                   (json.dumps(result),effect_id))
+                    else:
+                        db.execute("UPDATE node_runs SET state='failed',error='effect verified not executed' WHERE activation_id=%s AND node_id=%s AND state='uncertain'",
+                                   (effect["activation_id"],effect["node_id"]))
+                        db.execute("UPDATE activations SET state='failed',updated_at=now() WHERE id=%s AND state='suspended'",
+                                   (effect["activation_id"],))
+                        db.execute("UPDATE execution_effects SET state='cancelled',updated_at=now() WHERE id=%s",(effect_id,))
+                    db.execute("""
+                       INSERT INTO events(kind,source,source_id,scope_id,payload,principal_id)
+                       VALUES('effect.reconciled','control.admin',%s,%s,%s::jsonb,%s)
+                    """,(uuid.uuid4().hex,scope,json.dumps({'effect_id':str(effect_id),'outcome':outcome}),principal['id']))
+                return self.respond(200,{'effect_id':str(effect_id),'outcome':outcome})
             if self.path.startswith('/v1/control/handles/') and self.path.endswith('/cancel'):
                 path=self.path[len('/v1/control/handles/'):-len('/cancel')].strip('/')
                 activation_id=uuid.UUID(path)
@@ -176,6 +214,16 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as db:
                     candidates=db.execute("SELECT id,content,source_event_id FROM memory_candidates WHERE scope_id=%s AND state='pending' ORDER BY created_at DESC LIMIT 50",(scope,)).fetchall()
                 return self.respond(200,{'candidates':candidates})
+            if self.path == '/v1/control/effects':
+                need(principal,'control.admin')
+                with connect() as db:
+                    effects=db.execute("""
+                       SELECT ef.id,ef.activation_id,ef.node_id,ef.capability_id,
+                              ef.state,ef.updated_at FROM execution_effects ef
+                       JOIN activations a ON a.id=ef.activation_id
+                       WHERE a.scope_id=%s ORDER BY ef.updated_at DESC LIMIT 100
+                    """,(scope,)).fetchall()
+                return self.respond(200,{'effects':effects})
             if self.path == '/v1/control/activity':
                 with connect() as db:
                     rows=db.execute("SELECT id,graph_revision,state,result,updated_at FROM activations WHERE scope_id=%s ORDER BY updated_at DESC LIMIT 20",(scope,)).fetchall()
