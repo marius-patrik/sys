@@ -1,6 +1,7 @@
 """Real PostgreSQL, model-bridge mock, event->graph->memory, MCP and web integration."""
 import json
 import os
+import base64
 import sys
 import threading
 import time
@@ -18,25 +19,40 @@ class FullSystemIntegration(unittest.TestCase):
         os.environ["LIVING_DATABASE_URL"]=os.environ["LIVING_TEST_DATABASE_URL"]
         os.environ.pop("LIVING_DATABASE_URL_FILE",None)
         os.environ["LIVING_DEV_MODE"]="1"
+        os.environ["LIVING_SEAL_KEY"]=base64.b64encode(bytes(range(32))).decode()
         from livingd.database import migrate, seed
         migrate();seed()
 
-        class ModelMock(BaseHTTPRequestHandler):
+        class LiteLLMMock(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
+            def respond(self,data):
+                raw=json.dumps(data).encode()
+                self.send_response(200);self.send_header("Content-Type","application/json")
+                self.send_header("Content-Length",str(len(raw)))
+                self.end_headers();self.wfile.write(raw)
+            def do_GET(self):
+                assert self.path=="/v1/models",self.path
+                assert self.headers.get("Authorization")=="Bearer test-litellm-key"
+                self.respond({"object":"list","data":[{"id":"ci-chat-model","object":"model"}]})
             def do_POST(self):
                 size=int(self.headers.get("Content-Length","0"))
                 data=json.loads(self.rfile.read(size))
-                assert self.path=="/v1/nodes/model"
-                assert self.headers.get("Authorization")=="Bearer local-dev-only"
-                payload=json.dumps({"text":"Test model answer. Memory: "+data["context"]})
-                self.send_response(200);self.send_header("Content-Type","application/json")
-                self.send_header("Content-Length",str(len(payload)))
-                self.end_headers();self.wfile.write(payload.encode())
-        cls.model=ThreadingHTTPServer(("127.0.0.1",0),ModelMock)
+                assert self.path=="/v1/chat/completions",self.path
+                assert self.headers.get("Authorization")=="Bearer test-litellm-key"
+                assert data["model"]=="ci-chat-model"
+                memory=data["messages"][-1]["content"].split("Relevant context:\n",1)[-1]
+                self.respond({"choices":[{"message":{"role":"assistant",
+                    "content":"Test model answer. Memory: "+memory}}]})
+        cls.model=ThreadingHTTPServer(("127.0.0.1",0),LiteLLMMock)
         cls.model_thread=threading.Thread(target=cls.model.serve_forever,daemon=True)
         cls.model_thread.start()
-        os.environ["LIVING_DSH_URL"]="http://127.0.0.1:"+str(cls.model.server_port)
-        os.environ["LIVING_DSH_TOKEN"]="local-dev-only"
+        from livingd.models import configure_gateway,select_model
+        from livingd.database import connect
+        with connect() as db:
+            configure_gateway(db,"dev","http://127.0.0.1:"+str(cls.model.server_port),
+                              "test-litellm-key")
+        with connect() as db:
+            select_model(db,"dev","answer","ci-chat-model")
         from livingd.__main__ import Handler
         cls.http=ThreadingHTTPServer(("127.0.0.1",0),Handler)
         cls.http_thread=threading.Thread(target=cls.http.serve_forever,daemon=True)
@@ -46,7 +62,7 @@ class FullSystemIntegration(unittest.TestCase):
     def tearDownClass(cls):
         cls.http.shutdown();cls.http.server_close()
         cls.model.shutdown();cls.model.server_close()
-        os.environ.pop("LIVING_DSH_URL",None)
+        os.environ.pop("LIVING_SEAL_KEY",None)
 
     def pump(self,steps=250):
         from livingd.engine import tick
@@ -151,6 +167,19 @@ class FullSystemIntegration(unittest.TestCase):
         result=handle({"jsonrpc":"2.0","id":3,"method":"resources/list"})["result"]["resources"]
         self.assertTrue(result)
         self.assertEqual(handle({"jsonrpc":"2.0","id":4,"method":"initialize"})["result"]["serverInfo"]["name"],"living-sys")
+
+    def test_litellm_catalog_and_no_secret_reflection(self):
+        from livingd.database import connect
+        status=self.post("/v1/settings/litellm",{"base_url":"http://127.0.0.1:"+str(self.model.server_port)})
+        self.assertTrue(status["has_api_key"])
+        self.assertNotIn("test-litellm-key",str(status))
+        _,raw=self.read("/v1/models")
+        self.assertEqual(json.loads(raw)["data"][0]["id"],"ci-chat-model")
+        selected=self.post("/v1/models/selection",{"purpose":"compose","model":"ci-chat-model"})
+        self.assertEqual(selected["selected"]["compose"],"ci-chat-model")
+        with connect() as db:
+            stored=db.execute("SELECT ciphertext,nonce FROM integration_credentials WHERE scope_id='dev' AND name='litellm.api_key'").fetchone()
+        self.assertNotIn(b"test-litellm-key",bytes(stored["ciphertext"]))
 
     def test_dynamic_web_and_mcp_http(self):
         content,body=self.read("/")

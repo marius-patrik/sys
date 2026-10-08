@@ -1,8 +1,8 @@
 # Living Intelligence
 ## Executable Architecture and Bootstrap Contracts
 
-**Version 0.27 · 8 October 2026**  
-**Status:** Architecture and seed-policy specification. The runtime, database migrations, DSH adapter, and cross-surface clients have **not** been implemented. The companion reference fixtures test only deterministic design rules.
+**Architecture specification · 8 October 2026**  
+**Status:** See [implementation.md](implementation.md) for the tested development subset. Full autonomous intelligence remains a research objective.
 
 ## 1. System boundary
 
@@ -10,7 +10,7 @@ Living Intelligence is an ongoing, database-defined computation. Its persistent 
 
 A pinned **Nix build** produces the core image, distributed via a `Dockerfile`; **Compose** deploys `livingd` alongside optional local PostgreSQL, LiteLLM, DSH, and inference services. PostgreSQL can instead be remote. A **separate worker OCI endpoint** runs isolated conventional programs, with credentials segregated from the Compose host. The host filesystem remains conventional. A logical computational unit is a nested database scope; an OCI sandbox is allocated only when physical process isolation is required.
 
-**One `dsh-living` plugin** bridges assigned graph nodes to DSH model and tool services. Graphs stored in PostgreSQL control when to call a model, which tools to expose, how to interpret responses, what to do next, and when to stop. The stock ReAct loop is absent from the Living profile. LiteLLM routes the actual model requests to configured local or hosted inference engines. DSH, LiteLLM, and Docker remain unmodified upstream components.
+**LiteLLM is the sole model gateway.** `livingd` discovers the models available to the database-stored virtual key through LiteLLM `/v1/models`; model policy and inference use those IDs and `/v1/chat/completions`. PostgreSQL owns encrypted integration credentials, selected model IDs and gateway configuration. The single optional `dsh-living` plugin bridges tool nodes to DSH's guarded tool execution; it does not choose models or run an independent agent loop. All external systems remain unmodified.
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,8 @@ flowchart TB
   E["External agents · MCP"] <--> A
   A <--> P[("PostgreSQL · memory / events / programs / capabilities")]
   A --> X["Event delivery + graph execution"]
-  X --> D["One DSH adapter · LiteLLM / tools"]
+  X --> D["LiteLLM · dynamic model gateway"]
+  X --> H["DSH tool bridge"]
   X --> O["Separate OCI worker engine"]
   X --> P
 ```
@@ -200,3 +201,9 @@ living/
 Implement **(1)** PostgreSQL schemas and seeded Control action/view, **(2)** durable event routing and seeded deterministic policies, **(3)** deterministic graph interpreter/scheduler, **(4)** typed graph matching/composer, **(5)** PostgreSQL-native memory and retrieval, **(6)** one DSH bridge and LiteLLM/OCI bindings, **(7)** real generic interface renderers and recovery, and **(8)** isolated policy/graph evolution. Seed fixtures in the companion archive are *reference contracts and unit-level checks*, not a functional `livingd` implementation.
 
 **External technical contracts:** [PostgreSQL queue locking](https://www.postgresql.org/docs/current/sql-select.html), [PostgreSQL notifications](https://www.postgresql.org/docs/current/sql-notify.html), [pgvector](https://github.com/pgvector/pgvector), [DSH architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md), [DSH tools](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/tools.md), [DSH LLM](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/llm-streaming.md), [Nix](https://nix.dev/), [MCP](https://modelcontextprotocol.io/specification/), [Compose](https://docs.docker.com/compose/).
+
+## Credential and model authority
+
+PostgreSQL stores scoped encrypted credentials, nonsecret endpoint origins, and model selections. The sealing root and database login are bootstrap secrets that cannot recursively live in the database being opened; they remain in mounted files or an external key-management system. Credentials use AES-GCM authenticated encryption, random nonces, and scope/name-bound associated data. No plaintext provider key is returned to the client or written into an event.
+
+An authenticated caller's authorized LiteLLM virtual key determines model visibility at `GET /v1/models`. The model selector stores only an advertised ID; an inference node re-reads the current gateway configuration and model policy and sends an OpenAI-compatible request to LiteLLM. Model catalog errors remain visible and never silently invoke another provider. The GUI's connection form and model-picker view are Control definitions persisted in the database, not handwritten provider lists. The development Control server currently lacks authentication and must remain loopback-only.

@@ -5,7 +5,7 @@
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
-      py = pkgs.python3.withPackages (ps: [ ps.psycopg ]);
+      py = pkgs.python3.withPackages (ps: [ ps.psycopg ps.cryptography ]);
       livingd = pkgs.stdenvNoCC.mkDerivation {
         pname = "livingd";
         version = "0.28.0";
