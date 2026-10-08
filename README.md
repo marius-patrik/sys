@@ -22,7 +22,7 @@ python3 -m unittest discover -s tests -p 'test_postgres_integration.py' -v
 
 The integration test applies migrations, seeds a deterministic graph, ingests a request, routes its event, executes two graph nodes, checks idempotency, and inspects committed results. It requires a real PostgreSQL connection; CI provides one.
 
-For Docker/Nix bootstrap, see [implementation instructions](docs/implementation.md) and `compose*.yaml`. Generate `flake.lock` before building; the flake currently targets `x86_64-linux`.
+For Docker/Nix bootstrap, see [implementation instructions](docs/implementation.md) and `compose*.yaml`. The committed `flake.lock` pins Nix dependencies; the flake currently targets `x86_64-linux`.
 
 ## CI
 
