@@ -153,6 +153,7 @@ def handle(request,principal):
             for run in runs:
                 db.execute("UPDATE activations SET state='cancelled',cancelled_at=now() WHERE id=%s AND state IN ('pending','running','suspended')",(run["id"],))
                 db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND state='running'",(run["id"],))
+            task=_task(db,params.get("taskId"),principal)
             status=_state(db,task,principal)
         return response(rid,status,modern=modern)
     if method=="resources/list":
