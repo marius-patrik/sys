@@ -7,7 +7,7 @@ from .registry import catalog
 
 def actions(principal):
     with connect() as db:
-        actions=db.execute("SELECT id,title,input_name,revision,graph_revision FROM control_actions WHERE enabled ORDER BY id").fetchall()
+        actions=db.execute("SELECT id,title,input_name,revision,graph_revision FROM control_actions WHERE enabled AND (scope_id IS NULL OR scope_id=%s) ORDER BY id",(principal["scope_id"],)).fetchall()
         graphs=db.execute("SELECT id,definition FROM graph_revisions WHERE id=ANY(%s)",([a["graph_revision"] for a in actions],)).fetchall()
         definitions={r["id"]:r["definition"] for r in graphs}
         manifest=catalog(db)

@@ -64,8 +64,8 @@ def propose(scope:str,goal:str,generate=None)->dict:
         records=db.execute("""
             SELECT c.revision_id,c.tags,c.description,g.definition
             FROM graph_catalog c JOIN graph_revisions g ON g.id=c.revision_id
-            WHERE c.enabled AND c.risk='read'
-        """).fetchall()
+            WHERE c.enabled AND c.risk='read' AND (c.scope_id IS NULL OR c.scope_id=%s)
+        """,(scope,)).fetchall()
     ranked=[]
     for row in records:
         definition=row["definition"]
@@ -110,17 +110,17 @@ def install(db, proposal:dict, scope:str, event_id:int) -> str:
     if not _safe(graph,manifest):
         raise ValueError("composed graph requires read-only, typed input/output ports")
     raw=json.dumps(graph,sort_keys=True,separators=(',',':'))
-    revision="composed."+hashlib.sha256(raw.encode()).hexdigest()[:32]
+    revision="composed."+hashlib.sha256((scope+":"+raw).encode()).hexdigest()[:32]
     db.execute("INSERT INTO graph_revisions(id,definition) VALUES (%s,%s::jsonb) ON CONFLICT DO NOTHING",(revision,raw))
-    db.execute("INSERT INTO graph_catalog(revision_id,description,tags) VALUES (%s,%s,ARRAY['composed']) ON CONFLICT DO NOTHING",
-               (revision,proposal["description"][:2000]))
+    db.execute("INSERT INTO graph_catalog(revision_id,description,tags,scope_id) VALUES (%s,%s,ARRAY['composed'],%s) ON CONFLICT DO NOTHING",
+               (revision,proposal["description"][:2000],scope))
     # The same operation becomes discoverable in CLI, TUI, GUI and MCP without
     # changing client code. Mutating capabilities are never auto-published.
     action_id="living.composed."+revision.rsplit(".",1)[-1]
     db.execute("""
-        INSERT INTO control_actions(id,title,graph_revision,input_name)
-        VALUES(%s,%s,%s,'text') ON CONFLICT DO NOTHING
-    """,(action_id,"Composed: "+proposal["description"][:160],revision))
+        INSERT INTO control_actions(id,title,graph_revision,input_name,scope_id)
+        VALUES(%s,%s,%s,'text',%s) ON CONFLICT DO NOTHING
+    """,(action_id,"Composed: "+proposal["description"][:160],revision,scope))
     db.execute("INSERT INTO graph_proposals(id,source_event_id,scope_id,definition,accepted_revision) VALUES (%s,%s,%s,%s::jsonb,%s)",
                (uuid.uuid4(),event_id,scope,raw,revision))
     return revision

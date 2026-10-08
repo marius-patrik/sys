@@ -110,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
                 action_id = self.path[len('/v1/control/actions/'):]
                 if not isinstance(body.get('text'),str): raise ValueError('text must be string')
                 with connect() as db:
-                    action=db.execute('SELECT 1 FROM control_actions WHERE id=%s AND enabled', (action_id,)).fetchone()
+                    action=db.execute('SELECT 1 FROM control_actions WHERE id=%s AND enabled AND (scope_id IS NULL OR scope_id=%s)', (action_id,scope)).fetchone()
                 if not action: return self.respond(404, {'error':'unknown action'})
                 event = ingest('control.action',f'dev.control.{principal["id"]}.{action_id}',source_id,scope,{'action_id':action_id, 'text':body['text']},principal_id=principal['id'])
             else:
@@ -173,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,{'status':'ok','mode':'development'})
             if self.path == '/v1/control/catalog':
                 with connect() as db:
-                    actions=db.execute('SELECT id,title,graph_revision,input_name,revision FROM control_actions WHERE enabled ORDER BY id').fetchall()
+                    actions=db.execute('SELECT id,title,graph_revision,input_name,revision FROM control_actions WHERE enabled AND (scope_id IS NULL OR scope_id=%s) ORDER BY id',(scope,)).fetchall()
                     graph_rows=db.execute("SELECT id,definition FROM graph_revisions WHERE id=ANY(%s)",([a['graph_revision'] for a in actions],)).fetchall()
                     graphs={r['id']:r['definition'] for r in graph_rows}
                     manifest=catalog(db)

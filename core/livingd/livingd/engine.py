@@ -51,8 +51,8 @@ def route_once() -> bool:
             action_id = row["payload"].get("action_id") if row["kind"] == "control.action" else sub["action_id"]
             action = db.execute("""
                 SELECT id, revision, graph_revision, input_name FROM control_actions
-                WHERE id=%s AND enabled
-            """, (action_id,)).fetchone()
+                WHERE id=%s AND enabled AND (scope_id IS NULL OR scope_id=(SELECT scope_id FROM events WHERE id=%s))
+            """, (action_id,row["event_id"])).fetchone()
             if action:
                 db.execute("""
                     INSERT INTO event_deliveries(event_id,subscription_id,subscription_revision,
