@@ -37,7 +37,7 @@ def _lineage(db,event_id,scope):
       )
     """
     entries=db.execute(base+"""
-      SELECT a.id,a.state,a.result FROM activations a JOIN lineage l ON a.event_id=l.id
+      SELECT a.id,a.state,a.result,a.updated_at FROM activations a JOIN lineage l ON a.event_id=l.id
       WHERE a.scope_id=%s ORDER BY a.created_at
     """,(event_id,scope,scope,scope)).fetchall()
     pending=db.execute(base+"""
@@ -67,8 +67,9 @@ def _state(db,task,principal):
     value=completed[-1] if completed else None
     if value and isinstance(value.get("view"),dict):value=value["view"].get("value",value)
     if value is None:value="Task did not produce a view"
+    updated=max((x["updated_at"] for x in runs),default=task["created_at"])
     return {"resultType":"complete","taskId":str(task["id"]),"status":status,
-            "createdAt":task["created_at"].isoformat(),"lastUpdatedAt":task["created_at"].isoformat(),
+            "createdAt":task["created_at"].isoformat(),"lastUpdatedAt":updated.isoformat(),
             "ttlMs":None,"pollIntervalMs":1000,
             **({"result":{"content":[{"type":"text","text":str(value)}],
                           "isError":failed}} if status in ("completed","failed") else {})}
@@ -151,6 +152,7 @@ def handle(request,principal):
             runs,_=_lineage(db,task["event_id"],principal["scope_id"])
             for run in runs:
                 db.execute("UPDATE activations SET state='cancelled',cancelled_at=now() WHERE id=%s AND state IN ('pending','running','suspended')",(run["id"],))
+                db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND state='running'",(run["id"],))
             status=_state(db,task,principal)
         return response(rid,status,modern=modern)
     if method=="resources/list":

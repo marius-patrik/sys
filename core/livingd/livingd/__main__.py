@@ -184,10 +184,27 @@ class Handler(BaseHTTPRequestHandler):
                 activation_id=uuid.UUID(path)
                 with connect() as db:
                     row=db.execute("""
+                      WITH RECURSIVE subtree AS (
+                        SELECT id FROM activations WHERE id=%s AND scope_id=%s
+                        UNION ALL SELECT child.id FROM activations child
+                          JOIN subtree parent ON child.parent_activation_id=parent.id
+                          WHERE child.scope_id=%s
+                      )
                       UPDATE activations SET state='cancelled',cancelled_at=now(),updated_at=now()
-                      WHERE id=%s AND scope_id=%s AND state IN ('pending','running','suspended')
+                      WHERE id IN (SELECT id FROM subtree) AND state IN ('pending','running','suspended')
                       RETURNING id
-                    """,(activation_id,scope)).fetchone()
+                    """,(activation_id,scope,scope)).fetchone()
+                    if row:
+                        db.execute("""
+                            UPDATE execution_effects SET state='uncertain',updated_at=now()
+                            WHERE activation_id IN (
+                              WITH RECURSIVE subtree AS (
+                                SELECT id FROM activations WHERE id=%s AND scope_id=%s
+                                UNION ALL SELECT child.id FROM activations child JOIN subtree parent
+                                  ON child.parent_activation_id=parent.id WHERE child.scope_id=%s
+                              ) SELECT id FROM subtree
+                            ) AND state='running'
+                        """,(activation_id,scope,scope))
                 if not row:return self.respond(404,{'error':'activation not found or already terminal'})
                 return self.respond(200,{'id':activation_id,'state':'cancelled'})
             if self.path == '/mcp':

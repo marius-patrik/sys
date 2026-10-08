@@ -19,7 +19,10 @@ pre{white-space:pre-wrap;word-break:break-word}small{color:#a5a9b6}
 "use strict";
 const byId=id=>document.getElementById(id);
 const node=(tag,text)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);return n};
-async function api(url,init){const token=byId("control-token").value.trim();const h=new Headers(init?.headers||{});if(token)h.set("Authorization","Bearer "+token);const r=await fetch(url,{...init,headers:h});if(!r.ok)throw Error(await r.text());return r.json()}
+async function api(url,init){
+  if(typeof url!=="string"||!url.startsWith("/v1/")||url.startsWith("//"))
+    throw Error("Only same-origin Control API paths are permitted");
+  const token=byId("control-token").value.trim();const h=new Headers(init?.headers||{});if(token)h.set("Authorization","Bearer "+token);const r=await fetch(url,{...init,headers:h});if(!r.ok)throw Error(await r.text());return r.json()}
 async function invoke(path,text){
  const request={method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({text})};
  const answer=await api(path,request);byId("status").textContent="Accepted event "+answer.event_id;await follow(answer.event_id)
