@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
       - name: Expand migration source
         shell: bash
         run: |
@@ -21,7 +19,8 @@ jobs:
           fi
           base64 --decode bootstrap.b64 > /tmp/living-source.tar.xz
           tar -xJf /tmp/living-source.tar.xz -C .
-          rm bootstrap.b64 .github/workflows/bootstrap-import.yml
+          rm bootstrap.b64
+          rm .github/workflows/ci.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
