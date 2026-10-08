@@ -199,6 +199,42 @@ class CorrectnessTests(unittest.TestCase):
             status=db.execute("SELECT state FROM scheduled_events WHERE id=%s",(pending["id"],)).fetchone()
         self.assertEqual(status["state"],"cancelled")
 
+    def test_modern_mcp_tasks_and_origin_validation(self):
+        self.drain()
+        base="http://127.0.0.1:"+str(self.server.server_port)
+        meta={"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities":{
+                "extensions":{"io.modelcontextprotocol/tasks":{}}}}
+        def request(method,params,task_name=None,origin=None):
+            headers={"Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"],
+                     "Content-Type":"application/json","MCP-Protocol-Version":"2026-07-28",
+                     "Mcp-Method":method}
+            if task_name:headers["Mcp-Name"]=task_name
+            if origin:headers["Origin"]=origin
+            payload={"jsonrpc":"2.0","id":uuid.uuid4().hex,"method":method,
+                     "params":{**params,"_meta":meta}}
+            req=urllib.request.Request(base+"/mcp",method="POST",
+                  headers=headers,data=json.dumps(payload).encode())
+            with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            request("tools/list",{},origin="https://invalid.example")
+        self.assertEqual(exc.exception.code,403)
+        returned=request("tools/call",{"name":"living.upper","arguments":{"text":"modern mcp"}},
+                         task_name="living.upper")
+        self.assertEqual(returned["result"]["resultType"],"task")
+        task_id=returned["result"]["taskId"]
+        self.drain()
+        state=request("tasks/get",{"taskId":task_id},task_name=task_id)["result"]
+        self.assertEqual(state["status"],"completed")
+        self.assertEqual(state["result"]["content"][0]["text"],"MODERN MCP")
+        pending=request("tools/call",{"name":"living.echo","arguments":{"text":"cancel before delivery"}},
+                        task_name="living.echo")["result"]["taskId"]
+        cancelled=request("tasks/cancel",{"taskId":pending},task_name=pending)["result"]
+        self.assertEqual(cancelled["status"],"cancelled")
+        self.drain()
+        final=request("tasks/get",{"taskId":pending},task_name=pending)["result"]
+        self.assertEqual(final["status"],"cancelled")
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect

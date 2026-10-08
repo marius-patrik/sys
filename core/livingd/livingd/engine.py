@@ -80,6 +80,13 @@ def deliver_once() -> bool:
         """).fetchone()
         if row is None:
             return False
+        cancelled=db.execute("SELECT 1 FROM mcp_tasks WHERE event_id=%s AND cancelled_at IS NOT NULL",(row["event_id"],)).fetchone()
+        if cancelled:
+            db.execute("""
+              UPDATE event_deliveries SET state='failed',reason='MCP task cancelled before activation'
+              WHERE event_id=%s AND subscription_id=%s AND subscription_revision=%s
+            """,(row["event_id"],row["subscription_id"],row["subscription_revision"]))
+            return True
         value = row["payload"].get("text")
         graph = db.execute("SELECT definition FROM graph_revisions WHERE id=%s", (row["target_graph_revision"],)).fetchone()
         try:

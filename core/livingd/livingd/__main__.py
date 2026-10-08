@@ -191,6 +191,25 @@ class Handler(BaseHTTPRequestHandler):
                 if not row:return self.respond(404,{'error':'activation not found or already terminal'})
                 return self.respond(200,{'id':activation_id,'state':'cancelled'})
             if self.path == '/mcp':
+                origin=self.headers.get('Origin')
+                if origin and urlparse(origin).netloc.lower()!=self.headers.get('Host','').lower():
+                    return self.respond(403,{'error':'untrusted Origin'})
+                version=self.headers.get('MCP-Protocol-Version')
+                meta=(body.get('params') or {}).get('_meta') or {}
+                modern=meta.get('io.modelcontextprotocol/protocolVersion')=='2026-07-28'
+                if version and version not in ('2026-07-28','2025-03-26'):
+                    return self.respond(400,{'error':'unsupported MCP protocol version'})
+                if modern and version!='2026-07-28':
+                    return self.respond(400,{'error':'MCP version header required'})
+                if version=='2026-07-28':
+                    method=body.get('method')
+                    if self.headers.get('Mcp-Method')!=method:
+                        return self.respond(400,{'error':'Mcp-Method mismatch'})
+                    if method in ('tools/call','tasks/get','tasks/cancel'):
+                        item=(body.get('params') or {})
+                        expected=item.get('name') if method=='tools/call' else item.get('taskId')
+                        if self.headers.get('Mcp-Name')!=expected:
+                            return self.respond(400,{'error':'Mcp-Name mismatch'})
                 reply=handle_mcp(body,principal)
                 if reply is None:
                     self.send_response(202);self.end_headers();return
@@ -223,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(500,{'error':'internal error'})
     def do_GET(self):
         try:
+            if self.path=='/mcp':
+                return self.respond(405,{'error':'MCP 2026 uses POST only'})
             if self.path not in ('/','/index.html','/healthz'):
                 principal=self.principal('control.invoke')
                 scope=principal['scope_id']
