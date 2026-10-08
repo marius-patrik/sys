@@ -41,6 +41,8 @@ jobs:
           python -m unittest discover -s tests -p 'test_full_system.py' -v
       - name: DSH bundle syntax
         run: node --check plugins/dsh/living/index.js
+      - name: DSH node bridge contract
+        run: node --test tests/test_dsh_bridge.mjs
   nix:
     name: Nix package build
     runs-on: ubuntu-latest
