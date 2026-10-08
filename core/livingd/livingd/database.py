@@ -87,6 +87,11 @@ SEED_GRAPHS = [
                 "question":{"input":"text"},"context":{"node":"recall","port":"value"}}},
             {"id":"view","capability":"view.text","inputs":{"value":{"node":"model","port":"value"}}}
         ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.python.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"execute","capability":"program.python","inputs":{"code":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"execute","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
     {"id":"bootstrap.compose.1","definition":{
         "inputs":{"text":"text"},"nodes":[
             {"id":"composer","capability":"graph.compose","inputs":{"value":{"input":"text"}}},
@@ -101,6 +106,7 @@ SEED_ACTIONS=[
     ("living.recall","Search scoped memory","bootstrap.recall.1","text"),
     ("living.ask","Answer with memory and DSH","bootstrap.answer.1","text"),
     ("living.compose","Propose a typed graph","bootstrap.compose.1","text"),
+    ("living.python","Run isolated Python","bootstrap.python.1","text"),
 ]
 SEED_INTENT_RULES=[
     ("remember","remember ","living.remember",100),
@@ -109,6 +115,7 @@ SEED_INTENT_RULES=[
     ("compose","compose ","living.compose",100),
     ("uppercase","uppercase ","living.upper",100),
     ("echo","echo ","living.echo",100),
+    ("run-python","run python ","living.python",100),
 ]
 SEED_GRAPH_CATALOG=[
     ("bootstrap.echo.1","Echo input",["echo","text"]),

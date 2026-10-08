@@ -37,6 +37,24 @@ def execute(capability:str,args:dict,scope:str)->dict:
                 "_dispatch":{"action_id":action,"text":text}}
     if capability=="graph.compose":
         return {"value":"Graph proposal validated.","_proposal":propose(scope,args["value"],generate=model)}
+    if capability=="program.python":
+        bridge=os.getenv("LIVING_WORKER_URL","").rstrip("/")
+        if not bridge:
+            raise RuntimeError("OCI worker broker not configured")
+        if not bridge.startswith(("http://127.0.0.1:","http://localhost:","https://","http://worker-oci:")):
+            raise RuntimeError("refusing unapproved worker URL")
+        req=urllib.request.Request(bridge+"/v1/execute",
+            data=json.dumps({"language":"python","code":args["code"]}).encode(),
+            headers={"Content-Type":"application/json",
+                     "Authorization":"Bearer "+os.getenv("LIVING_WORKER_TOKEN","local-dev-only")},
+            method="POST")
+        with urllib.request.urlopen(req,timeout=25) as response:
+            result=json.load(response)
+        if not isinstance(result,dict) or not isinstance(result.get("stdout"),str):
+            raise RuntimeError("OCI broker returned invalid output")
+        if result.get("exit_code")!=0:
+            raise RuntimeError("OCI program failed: "+str(result.get("stderr",""))[:700])
+        return {"value":result["stdout"][:12000]}
     if capability=="model.answer":
         return {"value":model(args["question"],args["context"])}
     return execute_pure(capability,args)

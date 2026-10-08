@@ -43,6 +43,18 @@ jobs:
         run: node --check plugins/dsh/living/index.js
       - name: DSH node bridge contract
         run: node --test tests/test_dsh_bridge.mjs
+  oci:
+    name: Physical OCI sandbox smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull pinned Python worker runtime
+        run: docker pull python:3.12-alpine
+      - name: Exercise read-only, no-network sandbox
+        env:
+          LIVING_TEST_OCI: "1"
+        run: python3 -m unittest discover -s tests -p 'test_oci_worker.py' -v
+
   nix:
     name: Nix package build
     runs-on: ubuntu-latest

@@ -14,6 +14,7 @@ CAPABILITIES = {
     "model.answer": {"in": {"question": "text", "context": "text"}, "out": {"value": "text"}},
     "input.dispatch": {"in": {"value": "text"}, "out": {"view": "view"}},
     "graph.compose": {"in": {"value": "text"}, "out": {"value": "text"}},
+    "program.python": {"in": {"code": "text"}, "out": {"value": "text"}},
 }
 
 
