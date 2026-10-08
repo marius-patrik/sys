@@ -74,6 +74,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('X-Content-Type-Options','nosniff')
                 self.send_header('Cache-Control','no-store')
                 self.end_headers();self.wfile.write(data);return
+            if self.path == '/v1/memory/candidates':
+                with connect() as db:
+                    candidates=db.execute("SELECT id,content,source_event_id FROM memory_candidates WHERE scope_id='dev' AND state='pending' ORDER BY created_at DESC LIMIT 50").fetchall()
+                return self.respond(200,{'candidates':candidates})
             if self.path == '/v1/control/activity':
                 with connect() as db:
                     rows=db.execute("SELECT id,graph_revision,state,result,updated_at FROM activations WHERE scope_id='dev' ORDER BY updated_at DESC LIMIT 20").fetchall()

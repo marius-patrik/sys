@@ -99,6 +99,29 @@ class FullSystemIntegration(unittest.TestCase):
         self.assertIn(label,result["result"]["view"]["value"])
         self.assertIn("Test model answer",result["result"]["view"]["value"])
 
+    def test_selective_memory_attention_and_approval(self):
+        from livingd.engine import ingest
+        from livingd.database import connect
+        from livingd.memory import search
+        observation="New documented observation "+uuid.uuid4().hex[:12]+" is useful"
+        event=ingest("tool.observed","fulltest",str(uuid.uuid4()),"dev",{"text":observation})
+        self.pump()
+        with connect() as db:
+            decision=db.execute("SELECT choice FROM memory_decisions WHERE event_id=%s",(event,)).fetchone()
+            self.assertEqual(decision["choice"],"candidate")
+            candidate=db.execute("SELECT id,state FROM memory_candidates WHERE source_event_id=%s",(event,)).fetchone()
+            self.assertEqual(candidate["state"],"pending")
+            self.assertEqual(search(db,"dev",observation.split()[3]),[])
+        approval=ingest("control.action","fulltest",str(uuid.uuid4()),"dev",
+                        {"action_id":"living.approve-memory","text":str(candidate["id"])})
+        self.pump()
+        with connect() as db:
+            status=db.execute("SELECT state FROM memory_candidates WHERE id=%s",(candidate["id"],)).fetchone()
+            self.assertEqual(status["state"],"approved")
+            self.assertGreaterEqual(db.execute("SELECT count(*) AS n FROM memory_claims WHERE scope_id='dev' AND content=%s",(observation,)).fetchone()["n"],1)
+            e=db.execute("SELECT count(*) AS n FROM memory_evidence WHERE event_id=%s",(event,)).fetchone()
+            self.assertEqual(e["n"],1)
+
     def test_graph_composition_and_mcp(self):
         from livingd.engine import ingest
         from livingd.database import connect

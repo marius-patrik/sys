@@ -15,6 +15,8 @@ CAPABILITIES = {
     "input.dispatch": {"in": {"value": "text"}, "out": {"view": "view"}},
     "graph.compose": {"in": {"value": "text"}, "out": {"value": "text"}},
     "program.python": {"in": {"code": "text"}, "out": {"value": "text"}},
+    "memory.attend": {"in": {"value": "text"}, "out": {"view": "view"}},
+    "memory.approve": {"in": {"value": "text"}, "out": {"view": "view"}},
 }
 
 

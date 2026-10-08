@@ -5,7 +5,7 @@ import os
 import urllib.request
 from .database import connect
 from .logic import execute_pure
-from .memory import context
+from .memory import context,normalize
 from .composer import dispatch, propose
 
 def model(question:str,ctx:str)->str:
@@ -26,7 +26,31 @@ def model(question:str,ctx:str)->str:
         raise RuntimeError("DSH bridge returned invalid model output")
     return result["text"][:12000]
 
-def execute(capability:str,args:dict,scope:str)->dict:
+def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
+    if capability=="memory.attend":
+        if cause is None:raise ValueError("attention requires an event source")
+        value=args["value"].strip()
+        with connect() as db:
+            event=db.execute("SELECT kind FROM events WHERE id=%s AND scope_id=%s",(cause,scope)).fetchone()
+            if not event:raise ValueError("invalid attention source")
+            kind=event["kind"]
+            policy=db.execute("SELECT id,revision,min_length FROM attention_policies WHERE event_kind=%s AND enabled",(kind,)).fetchone()
+            if not policy:raise ValueError("no attention policy")
+            existing=db.execute("SELECT id FROM memory_claims WHERE scope_id=%s AND normalized_key=%s",(scope,normalize(value))).fetchone()
+        choice="ignore" if len(value)<policy["min_length"] or existing else "candidate"
+        reason="short-or-known" if choice=="ignore" else "new-observation"
+        return {"view":{"type":"text","value":"Memory attention: "+choice},
+                "_attention":{"choice":choice,"reason":reason,"content":value,
+                              "policy_id":policy["id"],"policy_revision":policy["revision"]}}
+    if capability=="memory.approve":
+        import uuid
+        candidate_id=str(uuid.UUID(args["value"].strip()))
+        with connect() as db:
+            candidate=db.execute("SELECT id FROM memory_candidates WHERE id=%s AND scope_id=%s AND state='pending'",
+                                 (candidate_id,scope)).fetchone()
+        if not candidate:raise ValueError("candidate not found or already handled")
+        return {"view":{"type":"text","value":"Approved memory candidate "+candidate_id},
+                "_approve_memory":candidate_id}
     if capability=="memory.search":
         return {"value":context(scope,args["query"])}
     if capability=="memory.remember":
