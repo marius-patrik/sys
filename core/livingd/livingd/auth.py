@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 from .database import connect
 
+class AuthenticationError(PermissionError):
+    pass
+
 def _token_from_bootstrap():
     path=os.getenv("LIVING_BOOTSTRAP_TOKEN_FILE")
     return Path(path).read_text().strip() if path else os.getenv("LIVING_BOOTSTRAP_TOKEN","")

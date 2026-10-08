@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from .database import connect, migrate, seed
 from .engine import ingest, tick
 from .mcp import handle as handle_mcp
-from .auth import authenticate,need
+from .auth import authenticate,need,AuthenticationError
 from .registry import catalog
 from .models import configure_gateway,gateway_status,list_models,select_model,selection,ModelGatewayError
 
@@ -22,7 +22,7 @@ LOG = logging.getLogger('livingd')
 class Handler(BaseHTTPRequestHandler):
     def principal(self,grant=None):
         p=authenticate(self.headers.get('Authorization'))
-        if p is None:raise PermissionError('authentication required')
+        if p is None:raise AuthenticationError('authentication required')
         if grant:need(p,grant)
         return p
     server_version = 'livingd/0.29-dev'
@@ -166,8 +166,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self.respond(404,{'error':'not found'})
             return self.respond(202,{'event_id':event,'status':'accepted','lookup':'/v1/events/'+str(event)})
+        except AuthenticationError as exc:
+            return self.respond(401,{'error':str(exc)})
         except PermissionError as exc:
-            return self.respond(403 if 'grant' in str(exc) else 401,{'error':str(exc)})
+            return self.respond(403,{'error':str(exc)})
         except ModelGatewayError as exc:
             return self.respond(503,{'error':str(exc)})
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
