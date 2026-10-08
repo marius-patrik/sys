@@ -94,6 +94,10 @@ def _connection(db,scope:str)->tuple[str,str|None]:
     if not row:raise ModelGatewayError("LiteLLM is not configured in PostgreSQL")
     return row["base_url"],read_credential(db,scope,row["credential_name"]) if row["credential_name"] else None
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        raise ModelGatewayError("LiteLLM redirection refused to protect credentials")
+
 def _request(url:str,key:str|None,payload:dict|None=None,timeout:float=12)->dict:
     body=None if payload is None else json.dumps(payload).encode()
     headers={"Accept":"application/json"}
@@ -101,7 +105,7 @@ def _request(url:str,key:str|None,payload:dict|None=None,timeout:float=12)->dict
     if key:headers["Authorization"]="Bearer "+key
     req=urllib.request.Request(url,data=body,headers=headers,method="POST" if body is not None else "GET")
     try:
-        with urllib.request.urlopen(req,timeout=timeout) as result:
+        with urllib.request.build_opener(_NoRedirect()).open(req,timeout=timeout) as result:
             if result.headers.get("Content-Length") and int(result.headers["Content-Length"])>MAX_RESPONSE:
                 raise ModelGatewayError("LiteLLM response too large")
             data=result.read(MAX_RESPONSE+1)

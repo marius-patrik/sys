@@ -75,6 +75,22 @@ class ModelGatewayTests(unittest.TestCase):
                        (sealed["nonce"],sealed["ciphertext"]))
             with self.assertRaisesRegex(ModelGatewayError,"unseal"):
                 read_credential(db,"scope-B","private.key")
+    def test_no_credentials_forwarded_on_redirect(self):
+        from livingd.models import _request,ModelGatewayError
+        class Redirect(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location","https://unexpected-provider.invalid/collect")
+                self.end_headers()
+        server=ThreadingHTTPServer(("127.0.0.1",0),Redirect)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        try:
+            with self.assertRaisesRegex(ModelGatewayError,"redirection"):
+                _request("http://127.0.0.1:"+str(server.server_port)+"/models","secret-token")
+        finally:
+            server.shutdown();server.server_close()
+
     def test_no_credentials_in_urls(self):
         from livingd.models import _gateway_url
         with self.assertRaises(ValueError):_gateway_url("https://user:token@litellm.example")
