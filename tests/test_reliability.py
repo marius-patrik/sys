@@ -135,6 +135,30 @@ class CorrectnessTests(unittest.TestCase):
                 "grants":["database.superuser"]})
         self.assertEqual(err.exception.code,403)
 
+    def test_external_effect_requires_explicit_reconciliation(self):
+        from livingd.engine import ingest
+        from livingd.database import connect
+        self.drain()
+        event=ingest("control.action","reliability",uuid.uuid4().hex,"dev",
+                     {"action_id":"living.python","text":"print(2+2)"})
+        self.drain()
+        with connect() as db:
+            a=db.execute("SELECT id,state FROM activations WHERE event_id=%s",(event,)).fetchone()
+            effect=db.execute("SELECT id,state FROM execution_effects WHERE activation_id=%s",(a["id"],)).fetchone()
+        self.assertEqual(a["state"],"suspended",a)
+        self.assertEqual(effect["state"],"uncertain")
+        endpoint="http://127.0.0.1:"+str(self.server.server_port)+"/v1/control/effects/"+str(effect["id"])+"/reconcile"
+        req=urllib.request.Request(endpoint,
+          data=json.dumps({"outcome":"committed","result":{"value":"verified output"}}).encode(),method="POST",
+          headers={"Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"],"Content-Type":"application/json"})
+        with urllib.request.urlopen(req,timeout=5) as response:
+            self.assertEqual(json.load(response)["outcome"],"committed")
+        self.drain()
+        with connect() as db:
+            a=db.execute("SELECT state,result FROM activations WHERE id=%s",(a["id"],)).fetchone()
+        self.assertEqual(a["state"],"completed",a)
+        self.assertEqual(a["result"]["view"]["value"],"verified output")
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect
