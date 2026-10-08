@@ -98,6 +98,43 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(row["state"],"completed")
         self.assertEqual(row["result"]["view"]["value"],"FENCE")
 
+    def test_control_api_registers_scoped_capabilities_and_graphs(self):
+        self.drain()
+        suffix=uuid.uuid4().hex
+        capability="test.api."+suffix
+        body={
+          "id":capability,"adapter":"pure","config":{"operation":"upper"},
+          "inputs":{"value":"text"},"outputs":{"value":"text"},
+          "effect":"read","grants":[]}
+        base="http://127.0.0.1:"+str(self.server.server_port)
+        headers={"Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"],
+                 "Content-Type":"application/json"}
+        def post(path,payload):
+            req=urllib.request.Request(base+path,method="POST",headers=headers,
+                data=json.dumps(payload).encode())
+            with urllib.request.urlopen(req,timeout=5) as res:return json.load(res)
+        data=post("/v1/control/capabilities",body)
+        self.assertEqual(data["revision"],1)
+        with self.assertRaises(urllib.error.HTTPError) as err:
+            post("/v1/control/capabilities",body)
+        self.assertEqual(err.exception.code,400)
+        graph={"inputs":{"text":"text"},"nodes":[
+           {"id":"calc","capability":capability,"inputs":{"value":{"input":"text"}}},
+           {"id":"view","capability":"view.text","inputs":{"value":{"node":"calc","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}
+        published=post("/v1/control/graphs",{"definition":graph,"title":"Test uppercase"})
+        self.assertEqual(published["scope_id"],"dev")
+        task=post("/v1/control/actions/"+published["action_id"],{"text":"hello"})
+        self.drain()
+        req=urllib.request.Request(base+"/v1/events/"+str(task["event_id"]),headers=headers)
+        with urllib.request.urlopen(req,timeout=5) as response:result=json.load(response)
+        self.assertTrue(result["terminal"])
+        self.assertEqual(result["activations"][-1]["result"]["view"]["value"],"HELLO")
+        with self.assertRaises(urllib.error.HTTPError) as err:
+            post("/v1/control/capabilities",{**body,"id":"test.bad."+suffix,
+                "grants":["database.superuser"]})
+        self.assertEqual(err.exception.code,403)
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect

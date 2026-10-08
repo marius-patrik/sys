@@ -47,6 +47,18 @@ class Handler(BaseHTTPRequestHandler):
             principal=self.principal('control.invoke')
             scope=principal['scope_id']
             body = self.read_payload()
+            if self.path in ('/v1/control/capabilities','/v1/control/graphs'):
+                need(principal,'control.admin')
+                from .control import register_capability,register_graph
+                with connect() as db:
+                    result=(register_capability(db,principal,body)
+                            if self.path.endswith('/capabilities')
+                            else register_graph(db,principal,body))
+                    db.execute("""
+                      INSERT INTO events(kind,source,source_id,scope_id,payload,principal_id)
+                      VALUES('control.definition_changed','control.admin',%s,%s,%s::jsonb,%s)
+                    """,(uuid.uuid4().hex,scope,json.dumps(result),principal['id']))
+                return self.respond(201,result)
             if self.path == '/v1/settings/litellm':
                 need(principal,'control.admin')
                 with connect() as db:
