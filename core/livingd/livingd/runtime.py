@@ -28,13 +28,35 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
             event=db.execute("SELECT kind FROM events WHERE id=%s AND scope_id=%s",(cause,scope)).fetchone()
             if not event:raise ValueError("invalid attention source")
             kind=event["kind"]
-            policy=db.execute("SELECT id,revision,min_length FROM attention_policies WHERE event_kind=%s AND enabled",(kind,)).fetchone()
+            policy=db.execute("SELECT id,revision,min_length,model_enabled,max_candidates FROM attention_policies WHERE event_kind=%s AND enabled",(kind,)).fetchone()
             if not policy:raise ValueError("no attention policy")
             existing=db.execute("SELECT id FROM memory_claims WHERE scope_id=%s AND normalized_key=%s",(scope,normalize(value))).fetchone()
         choice="ignore" if len(value)<policy["min_length"] or existing else "candidate"
         reason="short-or-known" if choice=="ignore" else "new-observation"
+        candidates=[{"content":value,"assertion":{}}] if choice=="candidate" else []
+        if candidates and policy["model_enabled"]:
+            try:
+                request=("Extract up to "+str(policy["max_candidates"])+
+                    " atomic factual claims as JSON with a claims list. Each claim has "
+                    "statement, subject, predicate, object. Do not invent facts; "
+                    "only extract explicitly stated observations. Evidence: "+value)
+                interpreted=model(request,"The output MUST be a JSON object.",scope,"memory")
+                parsed=json.loads(interpreted)
+                claims=parsed.get("claims",[])
+                if isinstance(claims,list):
+                    validated=[]
+                    for item in claims[:policy["max_candidates"]]:
+                        if not isinstance(item,dict):continue
+                        statement=item.get("statement")
+                        if not isinstance(statement,str) or not (1<=len(statement)<=600):continue
+                        assertion={k:item[k] for k in ("subject","predicate","object")
+                                   if isinstance(item.get(k),str) and len(item[k])<=180}
+                        validated.append({"content":statement,"assertion":assertion})
+                    if validated:candidates=validated;reason="model-extracted"
+            except (ValueError,TypeError,RuntimeError,OSError):
+                reason="extraction-unavailable-original-observation-preserved"
         return {"view":{"type":"text","value":"Memory attention: "+choice},
-                "_attention":{"choice":choice,"reason":reason,"content":value,
+                "_attention":{"choice":choice,"reason":reason,"candidates":candidates,
                               "policy_id":policy["id"],"policy_revision":policy["revision"]}}
     if capability=="memory.approve":
         import uuid

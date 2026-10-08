@@ -362,24 +362,27 @@ def node_once() -> bool:
                 """,(task["cause"],decision["policy_id"],decision["policy_revision"],
                      decision["choice"],decision["reason"]))
                 if decision["choice"]=="candidate":
-                    candidate_id=uuid.uuid5(uuid.NAMESPACE_URL,"living-candidate:"+str(task["cause"]))
-                    db.execute("""
-                      INSERT INTO memory_candidates(id,scope_id,source_event_id,content)
-                      VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING
-                    """,(candidate_id,task["scope_id"],task["cause"],decision["content"]))
-                    db.execute("""
-                        INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
-                        VALUES('memory.candidate','livingd',%s,%s,%s::jsonb,%s)
-                        ON CONFLICT(source,source_id) DO NOTHING
-                    """,(f"candidate:{candidate_id}",task["scope_id"],
-                         json.dumps({"candidate_id":str(candidate_id)}),task["cause"]))
+                    for index,observation in enumerate(decision["candidates"]):
+                        candidate_id=uuid.uuid5(uuid.NAMESPACE_URL,
+                           "living-candidate:"+str(task["cause"])+":"+str(index))
+                        db.execute("""
+                          INSERT INTO memory_candidates(id,scope_id,source_event_id,content,assertion)
+                          VALUES(%s,%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING
+                        """,(candidate_id,task["scope_id"],task["cause"],
+                             observation["content"],json.dumps(observation["assertion"])))
+                        db.execute("""
+                            INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                            VALUES('memory.candidate','livingd',%s,%s,%s::jsonb,%s)
+                            ON CONFLICT(source,source_id) DO NOTHING
+                        """,(f"candidate:{candidate_id}",task["scope_id"],
+                             json.dumps({"candidate_id":str(candidate_id)}),task["cause"]))
             if "_approve_memory" in private:
                 candidate=db.execute("""
-                    SELECT id,content,source_event_id FROM memory_candidates
+                    SELECT id,content,source_event_id,assertion FROM memory_candidates
                     WHERE id=%s AND scope_id=%s AND state='pending' FOR UPDATE
                 """,(private["_approve_memory"],task["scope_id"])).fetchone()
                 if candidate is None:raise ValueError("candidate no longer pending")
-                claim_id=record_memory(db,task["scope_id"],candidate["content"],candidate["source_event_id"])
+                claim_id=record_memory(db,task["scope_id"],candidate["content"],candidate["source_event_id"],candidate["assertion"])
                 db.execute("UPDATE memory_candidates SET state='approved' WHERE id=%s",(candidate["id"],))
                 db.execute("""
                     INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)

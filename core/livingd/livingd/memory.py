@@ -7,23 +7,54 @@ from .database import connect
 def normalize(text: str) -> str:
     return " ".join(text.casefold().split())
 
-def record(db, scope: str, text: str, event_id: int) -> str:
+def record(db, scope: str, text: str, event_id: int, assertion:dict|None=None) -> str:
     """Execute inside the fenced node-result transaction."""
     content=text.strip()
     if not (1 <= len(content) <= 12000):
         raise ValueError("memory content must contain 1..12000 characters")
+    assertion=assertion or {}
     key=normalize(content)
     claim_id=uuid.uuid5(uuid.NAMESPACE_URL, "living-memory:"+scope+":"+key)
     db.execute("""
-        INSERT INTO memory_claims(id,scope_id,content,normalized_key)
-        VALUES (%s,%s,%s,%s)
+        INSERT INTO memory_claims(id,scope_id,content,normalized_key,assertion)
+        VALUES (%s,%s,%s,%s,%s::jsonb)
         ON CONFLICT(scope_id,normalized_key)
-        DO UPDATE SET revision=memory_claims.revision+1, updated_at=now()
-    """,(claim_id,scope,content,key))
+        DO UPDATE SET revision=memory_claims.revision+1, updated_at=now(), assertion=EXCLUDED.assertion
+    """,(claim_id,scope,content,key,__import__("json").dumps(assertion)))
     db.execute("""
         INSERT INTO memory_evidence(claim_id,event_id,relation)
         VALUES (%s,%s,'supports') ON CONFLICT DO NOTHING
     """,(claim_id,event_id))
+    subject=assertion.get("subject")
+    predicate=assertion.get("predicate")
+    obj=assertion.get("object")
+    if all(isinstance(v,str) and 0<len(v)<=180 for v in (subject,predicate,obj)):
+        entities=[]
+        for name in (subject,obj):
+            normalized=normalize(name)
+            entity_id=uuid.uuid5(uuid.NAMESPACE_URL,"living-entity:"+scope+":"+normalized)
+            db.execute("""
+               INSERT INTO memory_entities(id,scope_id,name,normalized)
+               VALUES(%s,%s,%s,%s) ON CONFLICT(scope_id,normalized) DO NOTHING
+            """,(entity_id,scope,name,normalized))
+            entities.append(entity_id)
+        db.execute("""
+           INSERT INTO memory_relations(claim_id,subject_id,predicate,object_id)
+           VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING
+        """,(claim_id,entities[0],predicate,entities[1]))
+        conflicts=db.execute("""
+           SELECT other.claim_id FROM memory_relations other
+           WHERE other.subject_id=%s AND other.predicate=%s AND other.object_id<>%s
+              AND other.claim_id<>%s
+        """,(entities[0],predicate,entities[1],claim_id)).fetchall()
+        for row in conflicts:
+            a,b=sorted((str(claim_id),str(row["claim_id"])))
+            db.execute("""
+              INSERT INTO memory_conflicts(scope_id,claim_a,claim_b,reason)
+              VALUES(%s,%s,%s,'different objects for the same subject and predicate')
+              ON CONFLICT DO NOTHING
+            """,(scope,a,b))
+            db.execute("UPDATE memory_claims SET status='disputed' WHERE id IN (%s,%s)",(a,b))
     return str(claim_id)
 
 def search(db, scope: str, query: str, limit: int=8) -> list[dict]:

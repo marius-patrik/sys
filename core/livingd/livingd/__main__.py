@@ -56,6 +56,22 @@ class Handler(BaseHTTPRequestHandler):
                        self.headers.get('Idempotency-Key') or uuid.uuid4().hex,scope,
                        {'action_id':'living.goal','text':title.strip()},principal_id=principal['id'])
                 return self.respond(202,{'event_id':event,'status':'accepted'})
+            if self.path == '/v1/memory/attention/policy':
+                need(principal,'control.admin')
+                enabled=body.get('model_enabled')
+                if not isinstance(enabled,bool):raise ValueError('model_enabled must be boolean')
+                max_candidates=body.get('max_candidates',5)
+                if not isinstance(max_candidates,int) or not (1<=max_candidates<=8):
+                    raise ValueError('max_candidates must be 1..8')
+                kind=body.get('event_kind','tool.observed')
+                if kind not in ('tool.observed','source.changed'):
+                    raise ValueError('unsupported observation kind')
+                with connect() as db:
+                    row=db.execute("""
+                      UPDATE attention_policies SET model_enabled=%s,max_candidates=%s,
+                        revision=revision+1 WHERE event_kind=%s RETURNING id,revision,model_enabled,max_candidates
+                    """,(enabled,max_candidates,kind)).fetchone()
+                return self.respond(200,row)
             if self.path == '/v1/schedule':
                 need(principal,'goal.manage')
                 from .goals import schedule
@@ -219,6 +235,19 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/v1/models/selection':
                 with connect() as db:result=selection(db,scope)
                 return self.respond(200,{'selected':result})
+            if self.path == '/v1/memory/attention/policy':
+                with connect() as db:
+                    rows=db.execute("SELECT event_kind,revision,model_enabled,max_candidates FROM attention_policies ORDER BY event_kind").fetchall()
+                return self.respond(200,{'policies':rows})
+            if self.path == '/v1/memory/conflicts':
+                with connect() as db:
+                    rows=db.execute("""
+                      SELECT c.claim_a,c.claim_b,c.reason,a.content AS claim_a_text,
+                             b.content AS claim_b_text FROM memory_conflicts c
+                      JOIN memory_claims a ON a.id=c.claim_a JOIN memory_claims b ON b.id=c.claim_b
+                      WHERE c.scope_id=%s ORDER BY c.created_at DESC LIMIT 50
+                    """,(scope,)).fetchall()
+                return self.respond(200,{'conflicts':rows})
             if self.path in ('/v1/goals','/v1/control/data/goals'):
                 need(principal,'goal.manage')
                 with connect() as db:

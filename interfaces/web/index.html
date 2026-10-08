@@ -87,7 +87,7 @@ function component(def,catalog){
  }else if(type==="model-picker"){
     const target=node("div");section.append(target);
     Promise.all([api(def.models),api(def.selection)]).then(([models,selected])=>{
-      for(const purpose of ["default","answer","compose"]){
+      for(const purpose of ["default","answer","compose","memory"]){
         const form=node("form");form.append(node("label",purpose+" model "));
         const select=node("select");select.style.maxWidth="100%";
         for(const model of models.data||[]){
