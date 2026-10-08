@@ -97,13 +97,13 @@ class Handler(BaseHTTPRequestHandler):
                 principal=self.principal('control.invoke')
                 scope=principal['scope_id']
             if self.path == '/v1/settings/litellm':
-                with connect() as db:result=gateway_status(db,scope
+                with connect() as db:result=gateway_status(db,scope)
                 return self.respond(200,result)
             if self.path == '/v1/models':
-                with connect() as db:result=list_models(db,scope
+                with connect() as db:result=list_models(db,scope)
                 return self.respond(200,{'data':result})
             if self.path == '/v1/models/selection':
-                with connect() as db:result=selection(db,scope
+                with connect() as db:result=selection(db,scope)
                 return self.respond(200,{'selected':result})
             if self.path == '/v1/control/capabilities':
                 with connect() as db: entries=catalog(db)

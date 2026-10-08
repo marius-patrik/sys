@@ -110,7 +110,7 @@ def deliver_once() -> bool:
                 ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1))
             ON CONFLICT DO NOTHING
         """,(activation_id,row["event_id"],row["target_graph_revision"],row["scope_id"],
-              json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"])))
+              json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"]))
         db.execute("""
             UPDATE event_deliveries SET state='done',activation_id=%s
             WHERE event_id=%s AND subscription_id=%s AND subscription_revision=%s
