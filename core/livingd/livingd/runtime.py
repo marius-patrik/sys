@@ -78,7 +78,7 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
     return execute_pure(capability,args)
 
 
-def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict,activation_id=None)->dict:
+def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict,activation_id=None,node_id=None)->dict:
     """Interpret a versioned DB capability. New instances require no Python dispatch edit."""
     import json
     from .models import read_credential
@@ -141,7 +141,7 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
         if not isinstance(arguments,dict):raise ValueError("DSH tool arguments must be an object")
         req=urllib.request.Request(url.rstrip("/")+"/v1/nodes/tool",
           data=json.dumps({"name":args["tool"],"arguments":arguments,
-              "call_id":str(cause)+":"+capability}).encode(),
+              "call_id":str(activation_id)+":"+str(node_id)}).encode(),
           headers={"Content-Type":"application/json","Authorization":"Bearer "+secret},
           method="POST")
         with urllib.request.urlopen(req,timeout=45) as response:

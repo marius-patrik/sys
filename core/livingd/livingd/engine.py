@@ -184,6 +184,7 @@ def _claim_node():
             if previous and previous['state']=='leased' and entry['effect']=='external':
                 db.execute("UPDATE node_runs SET state='uncertain',error='expired external operation requires reconciliation' WHERE activation_id=%s AND node_id=%s",(a['id'],node_id))
                 db.execute("UPDATE activations SET state='suspended' WHERE id=%s",(a['id'],))
+                db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND node_id=%s AND state='running'",(a['id'],node_id))
                 return {'finalized':True}
             epoch = previous["lease_epoch"] + 1 if previous else 1
             db.execute("""
@@ -195,6 +196,13 @@ def _claim_node():
                 WHERE (node_runs.state='leased' AND node_runs.lease_until < now())
                     OR (node_runs.state='retry_wait' AND node_runs.next_attempt_at <= now())
             """, (a["id"],node_id,epoch))
+            if entry["effect"]=="external":
+                effect_id=uuid.uuid5(uuid.NAMESPACE_URL,"living-effect:"+str(a["id"])+":"+node_id)
+                db.execute("""
+                   INSERT INTO execution_effects(id,activation_id,node_id,capability_id,state,idempotency_key)
+                   VALUES(%s,%s,%s,%s,'running',%s)
+                   ON CONFLICT(activation_id,node_id) DO NOTHING
+                """,(effect_id,a["id"],node_id,node["capability"],str(effect_id)))
             db.execute("UPDATE activations SET state='running',updated_at=now() WHERE id=%s", (a["id"],))
             outputs = {r["node_id"]: r["result"] for r in rows if r["state"] == 'completed'}
             args = node_inputs(g, node_id, a["inputs"], outputs)
@@ -228,12 +236,13 @@ def node_once() -> bool:
     try:
         from .runtime import execute_registered
         result=execute_registered(task["capability"],task["args"],task["scope_id"],
-            task["cause"],task["manifest"],task["activation_id"])
+            task["cause"],task["manifest"],task["activation_id"],task["node_id"])
     except Exception as exc:
         log.warning("graph node %s.%s failed: %s",task["activation_id"],task["node_id"],exc)
         with connect() as db:
-            retryable=task["manifest"]["effect"] in ("read","inference")
-            state='retry_wait' if retryable and task["epoch"]<3 else 'failed'
+            effect=task["manifest"]["effect"]
+            retryable=effect in ("read","inference")
+            state='uncertain' if effect=='external' else 'retry_wait' if retryable and task["epoch"]<3 else 'failed'
             row=db.execute("""
                 UPDATE node_runs SET state=%s,error=%s,lease_until=NULL,
                   next_attempt_at=CASE WHEN %s='retry_wait'
@@ -245,6 +254,9 @@ def node_once() -> bool:
             """,(state,str(exc)[:1000],state,2**min(task["epoch"],5),
                  task["activation_id"],task["node_id"],task["epoch"],
                  task["activation_id"])).fetchone()
+            if row and state=='uncertain':
+                db.execute("UPDATE activations SET state='suspended',updated_at=now() WHERE id=%s AND state='running'",(task["activation_id"],))
+                db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND node_id=%s",(task["activation_id"],task["node_id"]))
             if row and state=='failed':
                 db.execute("UPDATE activations SET state='failed',updated_at=now() WHERE id=%s AND state='running'",(task["activation_id"],))
         return True
@@ -262,6 +274,11 @@ def node_once() -> bool:
             RETURNING activation_id
         """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"],task["activation_id"])).fetchone()
         if row:
+            if task["manifest"]["effect"]=="external":
+                db.execute("""
+                  UPDATE execution_effects SET state='committed',result=%s::jsonb,updated_at=now()
+                  WHERE activation_id=%s AND node_id=%s AND state='running'
+                """,(json.dumps(result),task["activation_id"],task["node_id"]))
             if "_child_activation" in private:
                 spec=private["_child_activation"]
                 parent=db.execute("""
