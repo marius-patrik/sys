@@ -38,6 +38,9 @@ jobs:
       - name: PostgreSQL-backed tests (mandatory)
         run: |
           python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
+          python -m unittest discover -s tests -p 'test_full_system.py' -v
+      - name: DSH bundle syntax
+        run: node --check plugins/dsh/living/index.js
   nix:
     name: Nix package build
     runs-on: ubuntu-latest

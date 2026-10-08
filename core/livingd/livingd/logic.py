@@ -9,6 +9,11 @@ CAPABILITIES = {
     "text.upper": {"in": {"value": "text"}, "out": {"value": "text"}},
     "text.prefix": {"in": {"value": "text", "prefix": "text"}, "out": {"value": "text"}},
     "view.text": {"in": {"value": "text"}, "out": {"view": "view"}},
+    "memory.search": {"in": {"query": "text"}, "out": {"value": "text"}},
+    "memory.remember": {"in": {"value": "text"}, "out": {"value": "text"}},
+    "model.answer": {"in": {"question": "text", "context": "text"}, "out": {"value": "text"}},
+    "input.dispatch": {"in": {"value": "text"}, "out": {"view": "view"}},
+    "graph.compose": {"in": {"value": "text"}, "out": {"value": "text"}},
 }
 
 

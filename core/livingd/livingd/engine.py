@@ -6,7 +6,10 @@ import uuid
 from datetime import datetime, timezone
 
 from .database import connect
-from .logic import validate_graph, due_nodes, node_inputs, execute_pure, selected_outputs
+from .logic import validate_graph, due_nodes, node_inputs, selected_outputs
+from .runtime import execute
+from .memory import record as record_memory
+from .composer import install as install_proposal
 
 log = logging.getLogger(__name__)
 
@@ -157,7 +160,7 @@ def node_once() -> bool:
         return True
     # A single pure node runs outside the DB transaction. Invalid state cannot commit.
     try:
-        result = execute_pure(task["capability"], task["args"])
+        result = execute(task["capability"], task["args"], task["scope_id"])
     except Exception as exc:
         log.exception("node failed: %s", task)
         with connect() as db:
@@ -168,6 +171,8 @@ def node_once() -> bool:
             db.execute("UPDATE activations SET state='failed', updated_at=now() WHERE id=%s", (task["activation_id"],))
         return True
     with connect() as db:
+        # Effects and node completion share one fenced transaction.
+        private = {k:result.pop(k) for k in list(result) if k.startswith("_")}
         row = db.execute("""
             UPDATE node_runs SET state='completed', result=%s::jsonb, lease_until=NULL
             WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
@@ -175,6 +180,26 @@ def node_once() -> bool:
             RETURNING activation_id
         """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"])).fetchone()
         if row:
+            if "_memory_write" in private:
+                claim_id=record_memory(db,task["scope_id"],private["_memory_write"],task["cause"])
+                db.execute("""
+                    INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                    VALUES('memory.updated','livingd',%s,%s,%s::jsonb,%s)
+                    ON CONFLICT(source,source_id) DO NOTHING
+                """,(f"memory:{task['activation_id']}:{task['node_id']}",task["scope_id"],
+                     json.dumps({"claim_id":claim_id}),task["cause"]))
+            if "_dispatch" in private:
+                db.execute("""
+                    INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                    VALUES('control.action','livingd',%s,%s,%s::jsonb,%s)
+                    ON CONFLICT(source,source_id) DO NOTHING
+                """,(f"dispatch:{task['activation_id']}:{task['node_id']}",task["scope_id"],
+                     json.dumps(private["_dispatch"]),task["cause"]))
+            if "_proposal" in private:
+                revision=install_proposal(db,private["_proposal"],task["scope_id"],task["cause"])
+                result["value"]="Graph revision "+revision+" validated and stored."
+                db.execute("UPDATE node_runs SET result=%s::jsonb WHERE activation_id=%s AND node_id=%s",
+                           (json.dumps(result),task["activation_id"],task["node_id"]))
             db.execute("UPDATE activations SET updated_at=now() WHERE id=%s", (task["activation_id"],))
             db.execute("""
                 INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)

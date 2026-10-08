@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Living Intelligence</title>
+<style>
+:root{font:15px system-ui,sans-serif;color-scheme:dark;background:#101114;color:#f0f1f5}
+body{max-width:1120px;margin:2rem auto;padding:0 1rem}h1{font-size:1.55rem}
+main{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:20px}
+section{border:1px solid #343740;border-radius:12px;padding:16px;background:#181a20}
+button,input,textarea,select{color:inherit;background:#242732;border:1px solid #444a57;border-radius:7px;padding:9px;font:inherit}
+button{cursor:pointer}button:hover{border-color:#a4aee2}textarea{box-sizing:border-box;width:100%;min-height:100px}
+#actions{display:grid;gap:8px}#actions button{text-align:left}
+pre{white-space:pre-wrap;word-break:break-word;background:#20232b;padding:12px;border-radius:8px}
+small{color:#a5a9b6}.event{border-bottom:1px solid #333;padding:10px 0}
+@media(max-width:730px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><h1>Living Intelligence</h1><p><small>Database-defined capabilities, graph activity, and memory · development interface</small></p></header>
+<main>
+<section>
+<h2>Input</h2>
+<form id="prompt"><label for="text">Omnibar</label><textarea id="text" placeholder="Remember ..., recall ..., ask a question..." required></textarea><p><button>Submit input</button></p></form>
+<h2>Discovered actions</h2><div id="actions"></div>
+</section>
+<section>
+<h2>Activity</h2><p id="state" role="status">Connecting…</p><div id="activity"></div>
+<h2>Selected event</h2><pre id="result">No event submitted</pre>
+</section>
+</main>
+<script>
+"use strict";
+const el=id=>document.getElementById(id);
+let catalog=[];
+async function api(path,options){const r=await fetch(path,options);if(!r.ok)throw Error(await r.text());return r.json();}
+async function submit(path,text){const response=await api(path,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({text})});el("state").textContent="Accepted event "+response.event_id;await watchEvent(response.event_id);}
+async function watchEvent(id){let retries=0;async function poll(){try{const r=await api("/v1/events/"+id);el("result").textContent=JSON.stringify(r,null,2);if((r.activations||[]).some(a=>a.state==="pending"||a.state==="running")||!r.activations?.length){if(retries++<40)setTimeout(poll,500);}}catch(e){el("state").textContent=e.message;}}await poll();}
+el("prompt").onsubmit=e=>{e.preventDefault();submit("/v1/inputs",el("text").value).catch(x=>el("state").textContent=x.message);}
+async function reload(){
+try{
+  const data=await api("/v1/control/catalog");catalog=data.actions||[];
+  el("actions").replaceChildren(...catalog.map(action=>{
+    const b=document.createElement("button");b.textContent=action.title+" ("+action.id+")";
+    b.onclick=()=>submit(action.invoke,el("text").value).catch(x=>el("state").textContent=x.message);
+    return b;
+  }));
+  el("state").textContent="Connected · "+catalog.length+" dynamic actions";
+}catch(e){el("state").textContent=e.message;}
+}
+async function activity(){
+try{
+const r=await api("/v1/control/activity");
+el("activity").replaceChildren(...(r.activations||[]).map(a=>{
+  const d=document.createElement("div");d.className="event";
+  d.textContent=(a.state||"")+" · "+a.graph_revision+" · "+a.id;
+  d.onclick=()=>api("/v1/control/handles/"+a.id).then(x=>el("result").textContent=JSON.stringify(x,null,2));
+  return d;
+}));
+}catch(e){}
+}
+reload();activity();setInterval(activity,2000);setInterval(reload,30000);
+</script>
+</body></html>

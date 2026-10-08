@@ -1,29 +1,26 @@
-# Living Intelligence (`sys`)
+# Living Intelligence (sys)
 
-Persistent, database-resident computational architecture. **Current implementation: v0.28 deterministic vertical slice**, not a general agent, semantic-memory runtime, or production server.
+PostgreSQL owns memory, programs and events. The livingd process executes database-defined graphs. **Experimental local development only.**
 
-- [Architecture and execution contracts](docs/architecture.md)
-- [Implemented features and limitations](docs/implementation.md)
-- [Deterministic contracts](contracts/)
-- [PostgreSQL migration](db/migrations/0001_vertical_slice.sql)
+[Architecture](docs/architecture.md) | [Implementation notes](docs/implementation.md)
 
-## Development
+## Start locally
 
-The initial implementation requires Python 3.11+, `psycopg` 3, and PostgreSQL 16+. It exposes an **unauthenticated development-only API**, bound to loopback; do not deploy publicly.
+Use PostgreSQL 16 and a Python 3.11+ environment:
 
 ```sh
 python3 -m pip install -r requirements-dev.txt
-python3 -m unittest discover -s tests -p 'test_engine_*.py' -v
-python3 contracts/test_contracts.py
-
-export LIVING_TEST_DATABASE_URL='postgresql://living:living_test_password@127.0.0.1:5432/living'
-python3 -m unittest discover -s tests -p 'test_postgres_integration.py' -v
+export LIVING_DATABASE_URL=postgresql://living:living_test_password@127.0.0.1:5432/living
+export LIVING_DEV_MODE=1 LIVING_MIGRATE_ON_BOOT=1
+PYTHONPATH=core/livingd python3 -m livingd serve
 ```
 
-The integration test applies migrations, seeds a deterministic graph, ingests a request, routes its event, executes two graph nodes, checks idempotency, and inspects committed results. It requires a real PostgreSQL connection; CI provides one.
+Open http://127.0.0.1:8080 for the generic GUI, run python interfaces/tui/living.py for a TUI, or use interfaces/cli/living.py. The same action catalog is exposed over POST /mcp.
 
-For Docker/Nix bootstrap, see [implementation instructions](docs/implementation.md) and `compose*.yaml`. The committed `flake.lock` pins Nix dependencies; the flake currently targets `x86_64-linux`.
+Try `remember apples are fruit`, then `recall apples`. Asking a general question requires a configured DSH node bridge (LIVING_DSH_URL and LIVING_DSH_TOKEN). The single DSH plugin lives at plugins/dsh/living.
 
-## CI
+Graph proposals and scoped evidence-linked memory are implemented. Arbitrary native programs, production authentication, and autonomous learning are not enabled. The model gateway fails visibly when not configured.
 
-GitHub Actions runs pure contract tests and actual PostgreSQL 16 integration tests on pushes and PRs. A separate Nix job evaluates and builds the core derivation. These checks do **not** certify the missing DSH, semantic memory, MCP, or dynamic UI capabilities.
+## Testing
+
+GitHub Actions runs pure contracts, PostgreSQL integration tests, mock-DSH model execution tests, MCP/UI tests and Nix build checks. Passing the mock bridge tests is not proof of a live DSH/model deployment.

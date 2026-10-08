@@ -6,16 +6,18 @@ import signal
 import threading
 import time
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .database import connect, migrate, seed
 from .engine import ingest, tick
+from .mcp import handle as handle_mcp
 
 LOG = logging.getLogger('livingd')
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'livingd/0.28-dev'
+    server_version = 'livingd/0.29-dev'
     def log_message(self, *args):
         pass
     def respond(self, code, payload):
@@ -35,6 +37,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = self.read_payload()
+            if self.path == '/mcp':
+                reply=handle_mcp(body)
+                if reply is None:
+                    self.send_response(202);self.end_headers();return
+                return self.respond(200,reply)
             source_id = self.headers.get('Idempotency-Key') or uuid.uuid4().hex
             if not (1 <= len(source_id) <= 200): raise ValueError('bad idempotency key')
             if self.path == '/v1/inputs':
@@ -57,6 +64,20 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(500,{'error':'internal error'})
     def do_GET(self):
         try:
+            if self.path in ('/','/index.html'):
+                source=Path(os.getenv("LIVING_WEB_PATH",str(Path(__file__).resolve().parents[3]/"interfaces/web/index.html")))
+                if not source.is_file():return self.respond(404,{'error':'web interface not installed'})
+                data=source.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type','text/html; charset=utf-8')
+                self.send_header('Content-Length',str(len(data)))
+                self.send_header('X-Content-Type-Options','nosniff')
+                self.send_header('Cache-Control','no-store')
+                self.end_headers();self.wfile.write(data);return
+            if self.path == '/v1/control/activity':
+                with connect() as db:
+                    rows=db.execute("SELECT id,graph_revision,state,result,updated_at FROM activations WHERE scope_id='dev' ORDER BY updated_at DESC LIMIT 20").fetchall()
+                return self.respond(200,{'activations':rows})
             if self.path == '/healthz':
                 with connect() as db: db.execute('SELECT 1')
                 return self.respond(200,{'status':'ok','mode':'development'})

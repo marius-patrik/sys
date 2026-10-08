@@ -15,10 +15,13 @@
           mkdir -p "$out/lib/livingd" "$out/share/living/migrations" "$out/bin"
           cp -r core/livingd/livingd/. "$out/lib/livingd/"
           cp db/migrations/*.sql "$out/share/living/migrations/"
+          mkdir -p "$out/share/living/web"
+          cp interfaces/web/index.html "$out/share/living/web/index.html"
           cat > "$out/bin/livingd" <<EOF
           #!${pkgs.runtimeShell}
           export PYTHONPATH="$out/lib"
           export LIVING_MIGRATIONS_DIR="$out/share/living/migrations"
+          export LIVING_WEB_PATH="$out/share/living/web/index.html"
           exec ${py}/bin/python -m livingd "\$@"
           EOF
           chmod +x "$out/bin/livingd"
