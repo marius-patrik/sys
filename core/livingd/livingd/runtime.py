@@ -76,3 +76,62 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
     if capability=="model.answer":
         return {"value":model(args["question"],args["context"],scope,"answer")}
     return execute_pure(capability,args)
+
+
+def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict)->dict:
+    """Interpret a versioned DB capability. New instances require no Python dispatch edit."""
+    import json
+    from .models import read_credential
+    from .registry import ADAPTERS
+    adapter=manifest["adapter"]
+    config=manifest["config"]
+    if adapter not in ADAPTERS:raise RuntimeError("unsupported capability adapter")
+    if set(args)!=set(manifest["in"]):raise ValueError("invalid capability inputs")
+    if adapter=="pure":
+        op=config.get("operation")
+        if op=="echo":return {"value":args["value"]}
+        if op=="upper":return {"value":args["value"].upper()}
+        if op=="prefix":return {"value":args["prefix"]+args["value"]}
+        if op=="view":return {"view":{"type":"text","value":args["value"]}}
+        raise ValueError("unknown pure adapter operation")
+    if adapter=="memory":
+        op=config.get("operation")
+        canonical={"search":"memory.search","remember":"memory.remember",
+                   "attend":"memory.attend","approve":"memory.approve"}.get(op)
+        if not canonical:raise ValueError("unknown memory operation")
+        return execute(canonical,args,scope,cause)
+    if adapter=="model":
+        return {"value":model(args["question"],args["context"],scope,config.get("purpose","answer"))}
+    if adapter=="composer":
+        return execute("graph.compose",args,scope,cause)
+    if adapter=="control":
+        return execute("input.dispatch",args,scope,cause)
+    if adapter=="oci":
+        if config.get("runtime")!="python":raise ValueError("unsupported OCI runtime")
+        return execute("program.python",args,scope,cause)
+    if adapter=="dsh":
+        import urllib.parse
+        with connect() as db:
+            record=db.execute("""
+                SELECT base_url,credential_name FROM integration_endpoints
+                WHERE scope_id=%s AND service='dsh'
+            """,(scope,)).fetchone()
+            if not record:raise RuntimeError("DSH tool bridge not configured in DB")
+            secret=read_credential(db,scope,record["credential_name"])
+        if not secret:raise RuntimeError("DSH bridge credential not in DB")
+        url=record["base_url"]
+        if not (url.startswith("https://") or url.startswith("http://127.0.0.1:")
+                or url.startswith("http://localhost:") or url.startswith("http://dsh:")):
+            raise ValueError("unsafe DSH tool bridge URL")
+        arguments=json.loads(args["arguments"])
+        if not isinstance(arguments,dict):raise ValueError("DSH tool arguments must be an object")
+        req=urllib.request.Request(url.rstrip("/")+"/v1/nodes/tool",
+          data=json.dumps({"name":args["tool"],"arguments":arguments,
+              "call_id":str(cause)+":"+capability}).encode(),
+          headers={"Content-Type":"application/json","Authorization":"Bearer "+secret},
+          method="POST")
+        with urllib.request.urlopen(req,timeout=45) as response:
+            item=json.load(response)
+        if "outcome" not in item:raise ValueError("invalid DSH tool outcome")
+        return {"value":json.dumps(item["outcome"],default=str)[:12000]}
+    raise RuntimeError("capability adapter unavailable")

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+import threading
+import itertools
 from datetime import datetime, timezone
 
 from .database import connect
@@ -10,17 +12,18 @@ from .logic import validate_graph, due_nodes, node_inputs, selected_outputs
 from .runtime import execute
 from .memory import record as record_memory
 from .composer import install as install_proposal
+from .registry import catalog,authorize
 
 log = logging.getLogger(__name__)
 
 
-def ingest(kind: str, source: str, source_id: str, scope: str, payload: dict, cause: int | None = None) -> int:
+def ingest(kind: str, source: str, source_id: str, scope: str, payload: dict, cause: int | None = None, principal_id: str = 'local-owner') -> int:
     """Ingest exactly one logical event per (source, source_id). Trigger enqueues it."""
     with connect() as db:
         row = db.execute("""
-            INSERT INTO events(kind, source, source_id, scope_id, payload, causation_event_id)
-            VALUES (%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT(source,source_id) DO NOTHING RETURNING id
-        """, (kind, source, source_id, scope, json.dumps(payload), cause)).fetchone()
+            INSERT INTO events(kind, source, source_id, scope_id, payload, causation_event_id,principal_id)
+            VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s) ON CONFLICT(source,source_id) DO NOTHING RETURNING id
+        """, (kind, source, source_id, scope, json.dumps(payload), cause,principal_id)).fetchone()
         if row is None:
             row = db.execute("SELECT id, kind, scope_id, payload FROM events WHERE source=%s AND source_id=%s", (source, source_id)).fetchone()
             if (row["kind"],row["scope_id"],row["payload"]) != (kind,scope,payload):
@@ -70,7 +73,7 @@ def deliver_once() -> bool:
     with connect() as db:
         row = db.execute("""
             SELECT d.event_id, d.subscription_id, d.subscription_revision,
-                   d.target_graph_revision, d.target_input_name, e.payload, e.scope_id
+                   d.target_graph_revision, d.target_input_name, e.payload, e.scope_id,e.principal_id
             FROM event_deliveries d JOIN events e ON e.id=d.event_id
             WHERE d.state='pending' ORDER BY d.event_id LIMIT 1
             FOR UPDATE OF d SKIP LOCKED
@@ -82,7 +85,13 @@ def deliver_once() -> bool:
         try:
             if graph is None or not isinstance(value,str):
                 raise ValueError("missing graph or invalid text")
-            validate_graph(graph["definition"])
+            manifest=catalog(db)
+            validate_graph(graph["definition"],manifest)
+            principal=db.execute("SELECT grants FROM control_principals WHERE id=%s AND enabled",(row["principal_id"],)).fetchone()
+            if not principal:raise ValueError("event has no valid principal")
+            grants=set(principal["grants"])
+            for node in graph["definition"]["nodes"]:
+                authorize(row["scope_id"],manifest[node["capability"]],grants)
             if graph["definition"]["inputs"].get(row["target_input_name"]) != "text":
                 raise ValueError("incompatible action input")
         except (ValueError,KeyError) as exc:
@@ -93,10 +102,15 @@ def deliver_once() -> bool:
             return True
         activation_id=uuid.uuid5(uuid.NAMESPACE_URL,f"living:{row['event_id']}:{row['subscription_id']}:{row['subscription_revision']}")
         db.execute("""
-            INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs)
-            VALUES (%s,%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING
+            INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs,principal_id,grants,root_event_id)
+            VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,
+                (WITH RECURSIVE chain AS (
+                    SELECT id,causation_event_id FROM events WHERE id=%s
+                    UNION ALL SELECT e.id,e.causation_event_id FROM events e JOIN chain c ON e.id=c.causation_event_id
+                ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1))
+            ON CONFLICT DO NOTHING
         """,(activation_id,row["event_id"],row["target_graph_revision"],row["scope_id"],
-              json.dumps({row["target_input_name"]:value})))
+              json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"])))
         db.execute("""
             UPDATE event_deliveries SET state='done',activation_id=%s
             WHERE event_id=%s AND subscription_id=%s AND subscription_revision=%s
@@ -108,18 +122,22 @@ def _claim_node():
     """Claim exactly one ready node; no external work is done in the transaction."""
     with connect() as db:
         activations = db.execute("""
-            SELECT a.id, a.graph_revision, a.inputs, a.scope_id, a.event_id, g.definition
+            SELECT a.id, a.graph_revision, a.inputs, a.scope_id, a.event_id,a.grants, g.definition
             FROM activations a JOIN graph_revisions g ON g.id=a.graph_revision
             WHERE a.state IN ('pending','running')
             ORDER BY a.created_at, a.id LIMIT 32 FOR UPDATE OF a SKIP LOCKED
         """).fetchall()
         for a in activations:
             g = a["definition"]
-            validate_graph(g)
-            rows = db.execute("SELECT node_id, state, lease_epoch, lease_until, result FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
+            manifest=catalog(db)
+            validate_graph(g,manifest)
+            rows = db.execute("SELECT node_id, state, lease_epoch, lease_until,next_attempt_at,result,attempts FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
             done = {r["node_id"] for r in rows if r["state"] == "completed"}
-            running = {r["node_id"] for r in rows if r["state"] == "leased" and r["lease_until"] and r["lease_until"] > datetime.now(timezone.utc)}
-            available = due_nodes(g, done, running)
+            running = {r['node_id'] for r in rows if
+                       (r['state']=='leased' and r['lease_until'] and r['lease_until']>datetime.now(timezone.utc))
+                       or (r['state']=='retry_wait' and r['next_attempt_at'] and r['next_attempt_at']>datetime.now(timezone.utc))
+                       or r['state'] in ('failed','uncertain')}
+            available = due_nodes(g, done, running,manifest)
             if not available:
                 if len(done) == len(g["nodes"]):
                     outputs = {r["node_id"]: r["result"] for r in rows}
@@ -135,41 +153,78 @@ def _claim_node():
             node_id = available[0]
             node = next(n for n in g["nodes"] if n["id"] == node_id)
             previous = next((r for r in rows if r["node_id"] == node_id), None)
+            entry=manifest[node['capability']]
+            authorize(a['scope_id'],entry,set(a['grants']))
+            if previous and previous['state']=='leased' and entry['effect']=='external':
+                db.execute("UPDATE node_runs SET state='uncertain',error='expired external operation requires reconciliation' WHERE activation_id=%s AND node_id=%s",(a['id'],node_id))
+                db.execute("UPDATE activations SET state='suspended' WHERE id=%s",(a['id'],))
+                return {'finalized':True}
             epoch = previous["lease_epoch"] + 1 if previous else 1
             db.execute("""
                 INSERT INTO node_runs(activation_id,node_id,lease_epoch,lease_until)
-                VALUES (%s,%s,%s, now() + interval '20 seconds')
+                VALUES (%s,%s,%s, now() + interval '90 seconds')
                 ON CONFLICT(activation_id,node_id) DO UPDATE
                 SET state='leased',lease_epoch=EXCLUDED.lease_epoch,
-                    lease_until=EXCLUDED.lease_until,error=NULL
-                WHERE node_runs.state='leased' AND node_runs.lease_until < now()
+                    lease_until=EXCLUDED.lease_until,error=NULL,attempts=node_runs.attempts+1,next_attempt_at=NULL
+                WHERE (node_runs.state='leased' AND node_runs.lease_until < now())
+                    OR (node_runs.state='retry_wait' AND node_runs.next_attempt_at <= now())
             """, (a["id"],node_id,epoch))
             db.execute("UPDATE activations SET state='running',updated_at=now() WHERE id=%s", (a["id"],))
             outputs = {r["node_id"]: r["result"] for r in rows if r["state"] == 'completed'}
             args = node_inputs(g, node_id, a["inputs"], outputs)
             return {"finalized": False, "activation_id":a["id"],"node_id":node_id,"epoch":epoch,
-                    "capability":node["capability"], "args":args,"scope_id":a["scope_id"],"cause":a["event_id"]}
+                    "capability":node["capability"], "args":args,"scope_id":a["scope_id"],"cause":a["event_id"],"manifest":entry}
         return None
 
 
+def _renew(activation_id,node_id,epoch,stop):
+    while not stop.wait(15):
+        try:
+            with connect() as db:
+                row=db.execute("""
+                    UPDATE node_runs SET lease_until=now()+interval '90 seconds'
+                    WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
+                    AND state='leased' AND lease_until>=now()
+                    RETURNING node_id
+                """,(activation_id,node_id,epoch)).fetchone()
+            if not row:return
+        except Exception:
+            log.exception("node lease heartbeat failed")
+
 def node_once() -> bool:
-    task = _claim_node()
-    if not task:
-        return False
-    if task["finalized"]:
-        return True
-    # A single pure node runs outside the DB transaction. Invalid state cannot commit.
+    task=_claim_node()
+    if not task:return False
+    if task["finalized"]:return True
+    stop=threading.Event()
+    heartbeat=threading.Thread(target=_renew,args=(task["activation_id"],
+        task["node_id"],task["epoch"],stop),daemon=True)
+    heartbeat.start()
     try:
-        result = execute(task["capability"], task["args"], task["scope_id"], task["cause"])
+        from .runtime import execute_registered
+        result=execute_registered(task["capability"],task["args"],task["scope_id"],
+            task["cause"],task["manifest"])
     except Exception as exc:
-        log.exception("node failed: %s", task)
+        log.warning("graph node %s.%s failed: %s",task["activation_id"],task["node_id"],exc)
         with connect() as db:
-            db.execute("""
-                UPDATE node_runs SET state='failed',error=%s,lease_until=NULL
-                WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s AND state='leased'
-            """, (str(exc)[:1000],task["activation_id"],task["node_id"],task["epoch"]))
-            db.execute("UPDATE activations SET state='failed', updated_at=now() WHERE id=%s", (task["activation_id"],))
+            retryable=task["manifest"]["effect"] in ("read","inference")
+            state='retry_wait' if retryable and task["epoch"]<3 else 'failed'
+            row=db.execute("""
+                UPDATE node_runs SET state=%s,error=%s,lease_until=NULL,
+                  next_attempt_at=CASE WHEN %s='retry_wait'
+                    THEN now()+(%s*interval '1 second') ELSE NULL END
+                WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
+                  AND state='leased' AND lease_until>=now()
+                  AND EXISTS(SELECT 1 FROM activations WHERE id=%s AND state='running')
+                RETURNING node_id
+            """,(state,str(exc)[:1000],state,2**min(task["epoch"],5),
+                 task["activation_id"],task["node_id"],task["epoch"],
+                 task["activation_id"])).fetchone()
+            if row and state=='failed':
+                db.execute("UPDATE activations SET state='failed',updated_at=now() WHERE id=%s AND state='running'",(task["activation_id"],))
         return True
+    finally:
+        stop.set()
+        heartbeat.join(timeout=1)
     with connect() as db:
         # Effects and node completion share one fenced transaction.
         private = {k:result.pop(k) for k in list(result) if k.startswith("_")}
@@ -177,8 +232,9 @@ def node_once() -> bool:
             UPDATE node_runs SET state='completed', result=%s::jsonb, lease_until=NULL
             WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
               AND state='leased' AND lease_until >= now()
+               AND EXISTS(SELECT 1 FROM activations WHERE id=%s AND state='running')
             RETURNING activation_id
-        """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"])).fetchone()
+        """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"],task["activation_id"])).fetchone()
         if row:
             if "_memory_write" in private:
                 claim_id=record_memory(db,task["scope_id"],private["_memory_write"],task["cause"])
@@ -190,11 +246,12 @@ def node_once() -> bool:
                      json.dumps({"claim_id":claim_id}),task["cause"]))
             if "_dispatch" in private:
                 db.execute("""
-                    INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
-                    VALUES('control.action','livingd',%s,%s,%s::jsonb,%s)
+                    INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id,principal_id)
+                    VALUES('control.action','livingd',%s,%s,%s::jsonb,%s,
+                        (SELECT principal_id FROM events WHERE id=%s))
                     ON CONFLICT(source,source_id) DO NOTHING
                 """,(f"dispatch:{task['activation_id']}:{task['node_id']}",task["scope_id"],
-                     json.dumps(private["_dispatch"]),task["cause"]))
+                     json.dumps(private["_dispatch"]),task["cause"],task["cause"]))
             if "_attention" in private:
                 decision=private["_attention"]
                 db.execute("""
@@ -242,6 +299,10 @@ def node_once() -> bool:
     return True
 
 
+_sequence=itertools.count()
 def tick() -> bool:
-    # Each operation is bounded; routing and execution progress independently.
-    return route_once() or deliver_once() or node_once()
+    steps=(route_once,deliver_once,node_once)
+    start=next(_sequence)%len(steps)
+    for shift in range(len(steps)):
+        if steps[(start+shift)%len(steps)]():return True
+    return False

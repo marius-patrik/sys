@@ -11,7 +11,7 @@ button{cursor:pointer}button:hover{border-color:#a4afe7}textarea{width:100%;box-
 td,th{text-align:left;border-bottom:1px solid #343942;padding:6px;max-width:180px;word-break:break-word}
 pre{white-space:pre-wrap;word-break:break-word}small{color:#a5a9b6}
 </style></head><body>
-<header><h1>Living Intelligence</h1><p><small>Rendered from the database-owned Control interface</small></p>
+<header><h1>Living Intelligence</h1><label>Control token <input id="control-token" type="password" autocomplete="off" placeholder="Paste token from .private/living_control_token"></label><p><small>Rendered from the database-owned Control interface</small></p>
 <form id="input"><textarea id="text" placeholder="Ask, remember, recall or request a graph…" required></textarea>
 <button>Submit</button></form><p id="status" role="status">Connecting…</p></header>
 <main id="workspace"></main><section><h2>Selected output</h2><pre id="output">No event selected</pre></section>
@@ -19,7 +19,7 @@ pre{white-space:pre-wrap;word-break:break-word}small{color:#a5a9b6}
 "use strict";
 const byId=id=>document.getElementById(id);
 const node=(tag,text)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);return n};
-async function api(url,init){const r=await fetch(url,init);if(!r.ok)throw Error(await r.text());return r.json()}
+async function api(url,init){const token=byId("control-token").value.trim();const h=new Headers(init?.headers||{});if(token)h.set("Authorization","Bearer "+token);const r=await fetch(url,{...init,headers:h});if(!r.ok)throw Error(await r.text());return r.json()}
 async function invoke(path,text){
  const request={method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({text})};
  const answer=await api(path,request);byId("status").textContent="Accepted event "+answer.event_id;await follow(answer.event_id)
@@ -27,7 +27,9 @@ async function invoke(path,text){
 async function follow(id){
  for(let i=0;i<45;i++){
  const event=await api("/v1/events/"+id);byId("output").textContent=JSON.stringify(event,null,2);
- if((event.activations||[]).length&&event.activations.every(a=>a.state==="completed"||a.state==="failed"))break;
+ const completed=(event.activations||[]).filter(a=>a.state==="completed"&&a.result?.view);
+ if(completed.length)byId("output").textContent=JSON.stringify(completed[completed.length-1].result.view,null,2);
+ if(event.terminal)break;
  await new Promise(resolve=>setTimeout(resolve,500))
  }
 }
@@ -138,5 +140,5 @@ async function render(){
  }catch(error){byId("status").textContent=error.message}
 }
 byId("input").onsubmit=e=>{e.preventDefault();invoke("/v1/inputs",byId("text").value).then(render).catch(error=>byId("status").textContent=error.message)}
-render();setInterval(render,30000);
+byId("control-token").addEventListener("change",render);
 </script></body></html>

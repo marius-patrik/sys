@@ -8,10 +8,11 @@ services:
     environment:
       LIVING_DATABASE_URL_FILE: /run/secrets/living_database_url
       LIVING_SEAL_KEY_FILE: /run/secrets/living_seal_key
+      LIVING_BOOTSTRAP_TOKEN_FILE: /run/secrets/living_control_token
       LIVING_LISTEN: 0.0.0.0:8080
       LIVING_DEV_MODE: "1"
       LIVING_MIGRATE_ON_BOOT: "1"
-    secrets: [living_database_url, living_seal_key]
+    secrets: [living_database_url, living_seal_key, living_control_token]
     user: "10001:10001"
     read_only: true
     tmpfs:
@@ -27,3 +28,5 @@ secrets:
     file: ./.private/living_database_url
   living_seal_key:
     file: ./.private/living_seal_key
+  living_control_token:
+    file: ./.private/living_control_token

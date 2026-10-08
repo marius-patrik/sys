@@ -5,6 +5,7 @@ import re
 import uuid
 from .database import connect
 from .logic import validate_graph
+from .registry import catalog
 
 def dispatch(scope: str, text: str) -> tuple[str,str]:
     """Deterministic rules live in PostgreSQL and are ordered by priority."""
@@ -38,16 +39,21 @@ def candidate_graph(prompt: str) -> dict:
       ],
       "outputs":{"view":{"node":"result","port":"view"}}
     }
-    validate_graph(proposal)
+    validate_graph(proposal,catalog())
     return proposal
 
-SAFE_CAPABILITIES={"memory.search","model.answer","text.echo","text.upper","text.prefix","view.text"}
+def safe_manifest(manifest=None):
+    entries=catalog() if manifest is None else manifest
+    return {name:entry for name,entry in entries.items()
+            if entry["effect"] in ("read","inference")
+            and entry["adapter"] in ("pure","memory","model")}
 
-def _safe(graph:dict)->bool:
+def _safe(graph:dict,manifest=None)->bool:
+    safe=safe_manifest(manifest)
     return (set(graph.get("inputs",{}))=={"text"}
       and graph["inputs"]["text"]=="text"
       and set(graph.get("outputs",{}))=={"view"}
-      and all(node["capability"] in SAFE_CAPABILITIES for node in graph["nodes"]))
+      and all(node["capability"] in safe for node in graph["nodes"]))
 
 def propose(scope:str,goal:str,generate=None)->dict:
     """Reuse catalog fragments first; optionally generate a typed graph proposal."""
@@ -63,7 +69,7 @@ def propose(scope:str,goal:str,generate=None)->dict:
     ranked=[]
     for row in records:
         definition=row["definition"]
-        validate_graph(definition)
+        validate_graph(definition,catalog())
         if not _safe(definition):continue
         vocabulary=set(row["tags"]) | set(re.findall(r"[a-z0-9]{3,}",row["description"].casefold()))
         score=len(terms & vocabulary)
@@ -76,17 +82,16 @@ def propose(scope:str,goal:str,generate=None)->dict:
         graph=None
         origin="seed"
         if generate is not None:
-            from .logic import CAPABILITIES
-            catalog={k:v for k,v in CAPABILITIES.items() if k in SAFE_CAPABILITIES}
+            available=safe_manifest()
             instructions=(
               "Return only a JSON object with inputs, nodes and outputs. "
-              "Available typed operations: "+json.dumps(catalog)+
+              "Available typed operations: "+json.dumps(available)+
               ". Graph input must be a single text port, output a single view port. "
               "Maximum 16 nodes, no side effects. Goal: "+goal)
             try:
                 text=generate(instructions,"Produce a valid bounded graph JSON.")
                 proposal=json.loads(text)
-                validate_graph(proposal)
+                validate_graph(proposal,catalog())
                 if len(proposal["nodes"])<=16 and _safe(proposal):
                     graph=proposal
                     origin="model"
@@ -100,8 +105,9 @@ def install(db, proposal:dict, scope:str, event_id:int) -> str:
     """Immutable, validated, content-addressed graph revision."""
     import hashlib
     graph=proposal["definition"]
-    validate_graph(graph)
-    if not _safe(graph):
+    manifest=catalog(db)
+    validate_graph(graph,manifest)
+    if not _safe(graph,manifest):
         raise ValueError("composed graph requires read-only, typed input/output ports")
     raw=json.dumps(graph,sort_keys=True,separators=(',',':'))
     revision="composed."+hashlib.sha256(raw.encode()).hexdigest()[:32]

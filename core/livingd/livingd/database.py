@@ -31,11 +31,21 @@ def migrate():
 
 
 def seed():
-    # The seed is idempotent, but it never overwrites user-modified definitions.
+    # The registry and grants are authoritative database records.
+    from .registry import SEED_CAPABILITIES, catalog
+    from .auth import install_owner
     with connect() as db:
+        for capid, inputs, outputs, adapter, config, effect, grants in SEED_CAPABILITIES:
+            db.execute("""
+                INSERT INTO capability_registry(id,revision,input_ports,output_ports,adapter,adapter_config,effect,required_grants)
+                VALUES (%s,1,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s,%s)
+                ON CONFLICT DO NOTHING
+            """,(capid,json.dumps(inputs),json.dumps(outputs),adapter,json.dumps(config),effect,grants))
+        install_owner(db)
+        manifest=catalog(db)
         for graph in SEED_GRAPHS:
             from .logic import validate_graph
-            validate_graph(graph["definition"])
+            validate_graph(graph["definition"],manifest)
             db.execute("INSERT INTO graph_revisions(id, definition) VALUES (%s, %s::jsonb) ON CONFLICT DO NOTHING", (graph["id"], json.dumps(graph["definition"])))
         for action in SEED_ACTIONS:
             db.execute("INSERT INTO control_actions(id, title, graph_revision, input_name) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", action)
