@@ -98,6 +98,39 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(row["state"],"completed")
         self.assertEqual(row["result"]["view"]["value"],"FENCE")
 
+    def test_nested_graph_continuation(self):
+        from livingd.engine import ingest
+        from livingd.database import connect
+        from livingd.registry import catalog
+        from livingd.logic import validate_graph
+        self.drain()
+        ident=uuid.uuid4().hex
+        revision="test.nested."+ident
+        action="test.nested.action."+ident
+        graph={"inputs":{"text":"text"},"nodes":[
+            {"id":"child","capability":"graph.call","inputs":{
+                "revision":{"literal":"bootstrap.upper.1"},"text":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"child","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}
+        with connect() as db:
+            validate_graph(graph,catalog(db))
+            db.execute("INSERT INTO graph_revisions(id,definition) VALUES(%s,%s::jsonb)",
+                       (revision,json.dumps(graph)))
+            db.execute("INSERT INTO control_actions(id,title,graph_revision,input_name) VALUES(%s,'Nested graph',%s,'text')",
+                       (action,revision))
+        event=ingest("control.action","reliability",ident,"dev",
+                     {"action_id":action,"text":"nested works"})
+        self.drain()
+        with connect() as db:
+            parent=db.execute("SELECT id,state,result FROM activations WHERE event_id=%s AND parent_activation_id IS NULL",(event,)).fetchone()
+            child=db.execute("SELECT state,depth FROM activations WHERE parent_activation_id=%s",(parent["id"],)).fetchone()
+            state=db.execute("SELECT state FROM node_runs WHERE activation_id=%s AND node_id='child'",(parent["id"],)).fetchone()
+        self.assertEqual(parent["state"],"completed",parent)
+        self.assertEqual(parent["result"]["view"]["value"],"NESTED WORKS")
+        self.assertEqual(child["state"],"completed")
+        self.assertEqual(child["depth"],1)
+        self.assertEqual(state["state"],"completed")
+
     def test_unauthorized_and_cross_scope_control(self):
         from livingd.engine import ingest
         from livingd.database import connect

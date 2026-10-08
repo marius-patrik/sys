@@ -131,12 +131,38 @@ def _claim_node():
             g = a["definition"]
             manifest=a["capability_pins"] or catalog(db)
             validate_graph(g,manifest)
-            rows = db.execute("SELECT node_id, state, lease_epoch, lease_until,next_attempt_at,result,attempts FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
+            rows = db.execute("SELECT node_id, state, lease_epoch, lease_until,next_attempt_at,result,attempts,child_activation_id FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
+            for running_child in (r for r in rows if r["state"]=="awaiting_child"):
+                child=db.execute("SELECT state,result FROM activations WHERE id=%s",
+                                 (running_child["child_activation_id"],)).fetchone()
+                if not child:raise RuntimeError("nested graph activation missing")
+                if child["state"]=="completed":
+                    output=child["result"] or {}
+                    value=output.get("view") or output.get("value")
+                    if isinstance(value,dict):value=value.get("value",json.dumps(value))
+                    if not isinstance(value,str):value=json.dumps(value)
+                    db.execute("""
+                      UPDATE node_runs SET state='completed',result=%s::jsonb
+                      WHERE activation_id=%s AND node_id=%s AND state='awaiting_child'
+                    """,(json.dumps({"value":value}),a["id"],running_child["node_id"]))
+                    db.execute("""
+                      INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                      VALUES('node.completed','livingd',%s,%s,%s::jsonb,%s)
+                      ON CONFLICT(source,source_id) DO NOTHING
+                    """,("resumed:"+str(a["id"])+":"+running_child["node_id"],a["scope_id"],
+                          json.dumps({"activation_id":str(a["id"]),"node_id":running_child["node_id"],
+                                      "value":value}),a["event_id"]))
+                    return {"finalized":True}
+                if child["state"] in ("failed","cancelled"):
+                    db.execute("UPDATE node_runs SET state='failed',error=%s WHERE activation_id=%s AND node_id=%s",
+                               ("nested graph "+child["state"],a["id"],running_child["node_id"]))
+                    db.execute("UPDATE activations SET state='failed' WHERE id=%s",(a["id"],))
+                    return {"finalized":True}
             done = {r["node_id"] for r in rows if r["state"] == "completed"}
             running = {r['node_id'] for r in rows if
                        (r['state']=='leased' and r['lease_until'] and r['lease_until']>datetime.now(timezone.utc))
                        or (r['state']=='retry_wait' and r['next_attempt_at'] and r['next_attempt_at']>datetime.now(timezone.utc))
-                       or r['state'] in ('failed','uncertain')}
+                       or r['state'] in ('failed','uncertain','awaiting_child')}
             available = due_nodes(g, done, running,manifest)
             if not available:
                 if len(done) == len(g["nodes"]):
@@ -202,7 +228,7 @@ def node_once() -> bool:
     try:
         from .runtime import execute_registered
         result=execute_registered(task["capability"],task["args"],task["scope_id"],
-            task["cause"],task["manifest"])
+            task["cause"],task["manifest"],task["activation_id"])
     except Exception as exc:
         log.warning("graph node %s.%s failed: %s",task["activation_id"],task["node_id"],exc)
         with connect() as db:
@@ -236,6 +262,50 @@ def node_once() -> bool:
             RETURNING activation_id
         """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"],task["activation_id"])).fetchone()
         if row:
+            if "_child_activation" in private:
+                spec=private["_child_activation"]
+                parent=db.execute("""
+                    SELECT principal_id,grants,root_event_id,depth,max_depth
+                    FROM activations WHERE id=%s AND state='running' FOR UPDATE
+                """,(task["activation_id"],)).fetchone()
+                target=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",
+                                  (spec["revision"],)).fetchone()
+                if not parent or not target or parent["depth"]>=parent["max_depth"]:
+                    raise ValueError("invalid nested graph activation")
+                child_manifest=catalog(db)
+                validate_graph(target["definition"],child_manifest)
+                if target["definition"].get("inputs")!={"text":"text"}:
+                    raise ValueError("nested graph needs text input")
+                for node in target["definition"]["nodes"]:
+                    authorize(task["scope_id"],child_manifest[node["capability"]],set(parent["grants"]))
+                child_id=uuid.uuid5(uuid.NAMESPACE_URL,
+                        "living-child:"+str(task["activation_id"])+":"+task["node_id"])
+                child_event=db.execute("""
+                    INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id,principal_id)
+                    VALUES('graph.child_started','livingd',%s,%s,%s::jsonb,%s,%s)
+                    ON CONFLICT(source,source_id) DO NOTHING RETURNING id
+                """,("child:"+str(child_id),task["scope_id"],
+                      json.dumps({"parent_activation":str(task["activation_id"]),
+                                  "node":task["node_id"]}),task["cause"],parent["principal_id"])).fetchone()
+                if child_event is None:
+                    child_event=db.execute("SELECT id FROM events WHERE source='livingd' AND source_id=%s",
+                                           ("child:"+str(child_id),)).fetchone()
+                child_pins={n["capability"]:child_manifest[n["capability"]]
+                           for n in target["definition"]["nodes"]}
+                db.execute("""
+                    INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs,principal_id,
+                                            grants,root_event_id,parent_activation_id,parent_node_id,
+                                            depth,max_depth,capability_pins)
+                    VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                    ON CONFLICT(id) DO NOTHING
+                """,(child_id,child_event["id"],spec["revision"],task["scope_id"],
+                     json.dumps({"text":spec["text"]}),parent["principal_id"],parent["grants"],
+                     parent["root_event_id"],task["activation_id"],task["node_id"],
+                     parent["depth"]+1,parent["max_depth"],json.dumps(child_pins)))
+                db.execute("""
+                    UPDATE node_runs SET state='awaiting_child',result=NULL,child_activation_id=%s
+                    WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
+                """,(child_id,task["activation_id"],task["node_id"],task["epoch"]))
             if "_memory_write" in private:
                 claim_id=record_memory(db,task["scope_id"],private["_memory_write"],task["cause"])
                 db.execute("""
@@ -293,9 +363,11 @@ def node_once() -> bool:
             db.execute("UPDATE activations SET updated_at=now() WHERE id=%s", (task["activation_id"],))
             db.execute("""
                 INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
-                VALUES('node.completed','livingd',%s,%s,%s::jsonb,%s)
+                VALUES(%s,'livingd',%s,%s,%s::jsonb,%s)
                 ON CONFLICT(source,source_id) DO NOTHING
-            """, (f"node:{task['activation_id']}:{task['node_id']}", task["scope_id"],json.dumps({"activation_id":str(task["activation_id"]),"node_id":task["node_id"],"result":result}),task["cause"]))
+            """, ('node.awaiting_child' if '_child_activation' in private else 'node.completed',
+                f"node:{task['activation_id']}:{task['node_id']}", task["scope_id"],
+                json.dumps({"activation_id":str(task["activation_id"]),"node_id":task["node_id"],"result":result}),task["cause"]))
     return True
 
 

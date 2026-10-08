@@ -78,7 +78,7 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
     return execute_pure(capability,args)
 
 
-def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict)->dict:
+def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict,activation_id=None)->dict:
     """Interpret a versioned DB capability. New instances require no Python dispatch edit."""
     import json
     from .models import read_credential
@@ -110,6 +110,18 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
         if config.get("runtime")!="python":raise ValueError("unsupported OCI runtime")
         return execute("program.python",args,scope,cause)
     if adapter=="graph":
+        from .registry import catalog, authorize
+        from .logic import validate_graph
+        with connect() as db:
+            parent=db.execute("SELECT depth,max_depth,grants FROM activations WHERE id=%s AND scope_id=%s",(activation_id,scope)).fetchone()
+            target=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",(args["revision"],)).fetchone()
+            if not parent or not target:raise ValueError("graph activation not found")
+            if parent["depth"]>=parent["max_depth"]:raise ValueError("nested graph depth exceeded")
+            manifest=catalog(db)
+            validate_graph(target["definition"],manifest)
+            if target["definition"].get("inputs")!={"text":"text"}:raise ValueError("child needs a text input")
+            for node in target["definition"]["nodes"]:
+                authorize(scope,manifest[node["capability"]],set(parent["grants"]))
         return {"_child_activation":{"revision":args["revision"],"text":args["text"]}}
     if adapter=="dsh":
         import urllib.parse
