@@ -7,7 +7,8 @@ from livingd.logic import (GraphValidationError,validate_graph,due_nodes,node_in
 
 class GraphTests(unittest.TestCase):
     def test_both_seed_graphs(self):
-        for g in SEED_GRAPHS: self.assertEqual(len(validate_graph(g['definition'])),2)
+        for g in SEED_GRAPHS:
+            self.assertEqual(len(validate_graph(g['definition'])),len(g['definition']['nodes']))
     def test_uppercase_trace(self):
         graph=SEED_GRAPHS[1]['definition']
         self.assertEqual(due_nodes(graph,set(),set()),['upper'])

@@ -31,18 +31,24 @@ def search(db, scope: str, query: str, limit: int=8) -> list[dict]:
     if len(query)>2000: raise ValueError("memory query too large")
     limit=max(1,min(limit,20))
     # Always filter scope in SQL before ranking, including negative terms.
+    # OR the informative tokens: a natural-language question need not contain
+    # only words that also occur in a remembered claim.
+    tokens=[w for w in re.findall(r"[^\W_]{3,}",query.casefold()) if w not in
+            {"what","when","where","which","with","about","know","does","could","would","should","have","that","this"}]
+    if not tokens: tokens=re.findall(r"[^\W_]{3,}",query.casefold())
+    if not tokens:return []
+    ts_query=" | ".join(tokens[:12])
     rows=db.execute("""
       SELECT m.id, m.content, m.revision, m.status,
-          COALESCE(ts_rank(m.search_vector,plainto_tsquery('simple',%s)),0) AS score,
+          COALESCE(ts_rank(m.search_vector,to_tsquery('simple',%s)),0) AS score,
           (SELECT count(*) FROM memory_evidence e
            WHERE e.claim_id=m.id AND e.relation='supports') AS sources
       FROM memory_claims m
       WHERE m.scope_id=%s AND m.status<>'retracted'
-        AND (m.search_vector @@ plainto_tsquery('simple',%s)
-             OR position(lower(%s) in lower(m.content))>0)
+        AND m.search_vector @@ to_tsquery('simple',%s)
       ORDER BY score DESC, m.updated_at DESC, m.id
       LIMIT %s
-    """,(query,scope,query,query,limit)).fetchall()
+    """,(ts_query,scope,ts_query,limit)).fetchall()
     return [{"id":str(r["id"]),"content":r["content"],
              "revision":r["revision"],"status":r["status"],
              "sources":r["sources"]} for r in rows]
