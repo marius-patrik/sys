@@ -1,0 +1,10 @@
+{
+  "id": "attention.seed.1",
+  "revision": 1,
+  "features": ["goal_relevance", "novelty", "expected_utility", "evidence_quality", "urgency"],
+  "weights": {"goal_relevance": 0.30, "novelty": 0.25, "expected_utility": 0.20, "evidence_quality": 0.15, "urgency": 0.10},
+  "thresholds": {"activate": 0.70, "classify_or_defer": 0.35},
+  "exempt_kinds": ["surface.input", "control.action", "effect.approved", "node.completed", "wake.due"],
+  "caps": {"max_graph_nesting": 8, "max_compositions_per_request": 32, "max_proposal_repairs": 2},
+  "description": "Seeded versioned policy: optional observations score; explicit/continuation events never silently drop. Classification must pass benefit-vs-cost and budget checks."
+}

@@ -1,0 +1,26 @@
+# DEVELOPMENT ONLY. The PostgreSQL service is a peer, not nested in livingd.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: living
+      POSTGRES_USER: living
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - living_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U living -d living"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  core:
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  living_pg_data: {}
+secrets:
+  postgres_password:
+    file: ./.private/postgres_password

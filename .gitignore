@@ -1,0 +1,5 @@
+.private/
+__pycache__/
+*.pyc
+flake.lock.bak
+result

@@ -1,0 +1,6 @@
+.private
+.git
+__pycache__
+*.pyc
+result
+*.zip

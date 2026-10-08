@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "id": "repo.inspect",
+      "version": 1,
+      "inputs": {
+        "workspace": "resource_ref"
+      },
+      "outputs": {
+        "result": "text"
+      },
+      "effect": "read",
+      "grants": [
+        "repository.read"
+      ],
+      "binding": "tool.invoke"
+    },
+    {
+      "id": "memory.retrieve",
+      "version": 1,
+      "inputs": {
+        "query": "text"
+      },
+      "outputs": {
+        "context": "context_ref"
+      },
+      "effect": "read",
+      "grants": [
+        "memory.read"
+      ],
+      "binding": "db.query"
+    },
+    {
+      "id": "model.invoke",
+      "version": 1,
+      "inputs": {
+        "observations": "text"
+      },
+      "outputs": {
+        "result": "text"
+      },
+      "effect": "inference",
+      "grants": [
+        "model.use"
+      ],
+      "binding": "dsh.model"
+    },
+    {
+      "id": "repo.patch",
+      "version": 1,
+      "inputs": {
+        "workspace": "resource_ref",
+        "patch": "text"
+      },
+      "outputs": {
+        "result": "text"
+      },
+      "effect": "write",
+      "grants": [
+        "repository.write"
+      ],
+      "binding": "oci.program"
+    },
+    {
+      "id": "text.echo",
+      "version": 1,
+      "inputs": {
+        "value": "text"
+      },
+      "outputs": {
+        "value": "text"
+      },
+      "effect": "read",
+      "grants": [],
+      "binding": "pure"
+    }
+  ]
+}

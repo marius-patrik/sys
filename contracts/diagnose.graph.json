@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "objective": "Diagnose a repository failure from its inspected state",
+  "inputs": {"workspace": "resource_ref"},
+  "nodes": [
+    {"id": "inspect", "capability": "repo.inspect", "inputs": {"workspace": {"input": "workspace"}}},
+    {"id": "reason", "capability": "model.invoke", "inputs": {"observations": {"node": "inspect", "port": "result"}}}
+  ],
+  "edges": [{"from": "inspect", "to": "reason", "port": "observations"}],
+  "outputs": {"diagnosis": {"node": "reason", "port": "result"}}
+}
