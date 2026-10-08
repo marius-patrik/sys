@@ -109,6 +109,8 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
     if adapter=="oci":
         if config.get("runtime")!="python":raise ValueError("unsupported OCI runtime")
         return execute("program.python",args,scope,cause)
+    if adapter=="graph":
+        return {"_child_activation":{"revision":args["revision"],"text":args["text"]}}
     if adapter=="dsh":
         import urllib.parse
         with connect() as db:
