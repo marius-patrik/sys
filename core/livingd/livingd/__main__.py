@@ -47,6 +47,34 @@ class Handler(BaseHTTPRequestHandler):
             principal=self.principal('control.invoke')
             scope=principal['scope_id']
             body = self.read_payload()
+            if self.path == '/v1/goals':
+                need(principal,'goal.manage')
+                title=body.get('title')
+                if not isinstance(title,str) or not title.strip():
+                    raise ValueError('goal title required')
+                event=ingest('control.action','control.goals.'+principal['id'],
+                       self.headers.get('Idempotency-Key') or uuid.uuid4().hex,scope,
+                       {'action_id':'living.goal','text':title.strip()},principal_id=principal['id'])
+                return self.respond(202,{'event_id':event,'status':'accepted'})
+            if self.path == '/v1/schedule':
+                need(principal,'goal.manage')
+                from .goals import schedule
+                goal_id=uuid.UUID(body['goal_id']) if body.get('goal_id') else None
+                with connect() as db:
+                    result=schedule(db,principal,goal_id,body.get('action_id'),
+                                    body.get('text'),body.get('due_at'))
+                return self.respond(201,result)
+            if self.path.startswith('/v1/goals/') and self.path.endswith('/cancel'):
+                need(principal,'goal.manage')
+                goal_id=uuid.UUID(self.path[len('/v1/goals/'):-len('/cancel')].strip('/'))
+                with connect() as db:
+                    result=db.execute("""
+                      UPDATE goal_units SET state='cancelled',updated_at=now()
+                      WHERE id=%s AND scope_id=%s AND state='active' RETURNING id
+                    """,(goal_id,scope)).fetchone()
+                    if not result:return self.respond(404,{'error':'active goal not found'})
+                    db.execute("UPDATE scheduled_events SET state='cancelled' WHERE goal_id=%s AND state='pending'",(goal_id,))
+                return self.respond(200,{'id':str(goal_id),'state':'cancelled'})
             if self.path in ('/v1/control/capabilities','/v1/control/graphs'):
                 need(principal,'control.admin')
                 from .control import register_capability,register_graph
@@ -191,6 +219,18 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/v1/models/selection':
                 with connect() as db:result=selection(db,scope)
                 return self.respond(200,{'selected':result})
+            if self.path in ('/v1/goals','/v1/control/data/goals'):
+                need(principal,'goal.manage')
+                with connect() as db:
+                    rows=db.execute("SELECT id,title,state,created_at,updated_at FROM goal_units WHERE scope_id=%s ORDER BY updated_at DESC LIMIT 100",(scope,)).fetchall()
+                if self.path.endswith('/data/goals'):
+                    return self.respond(200,{'columns':['id','title','state'],'rows':rows,'rowActions':[]})
+                return self.respond(200,{'goals':rows})
+            if self.path == '/v1/schedule':
+                need(principal,'goal.manage')
+                with connect() as db:
+                    rows=db.execute("SELECT id,goal_id,action_id,due_at,state FROM scheduled_events WHERE scope_id=%s ORDER BY due_at LIMIT 100",(scope,)).fetchall()
+                return self.respond(200,{'scheduled':rows})
             if self.path == '/v1/control/capabilities':
                 with connect() as db: entries=catalog(db)
                 exposed={k:{'revision':v['revision'],'inputs':v['in'],'outputs':v['out'],

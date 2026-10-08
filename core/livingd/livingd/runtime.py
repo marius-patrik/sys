@@ -109,6 +109,11 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
     if adapter=="oci":
         if config.get("runtime")!="python":raise ValueError("unsupported OCI runtime")
         return execute("program.python",args,scope,cause)
+    if adapter=="goal":
+        title=args["title"].strip()
+        if not 1<=len(title)<=200:raise ValueError("goal must be 1..200 characters")
+        return {"view":{"type":"text","value":"Goal recorded: "+title},
+                "_goal_create":{"title":title}}
     if adapter=="graph":
         from .registry import catalog, authorize
         from .logic import validate_graph

@@ -17,7 +17,7 @@ def install_owner(db):
     if token and len(token)<32:raise ValueError("bootstrap token too short")
     db.execute("""
       INSERT INTO control_principals(id,scope_id,grants) VALUES
-       ('local-owner','dev',ARRAY['control.invoke','memory.read','memory.write','model.use','graph.compose','graph.invoke','worker.execute','tool.invoke','control.admin'])
+       ('local-owner','dev',ARRAY['control.invoke','memory.read','memory.write','model.use','graph.compose','graph.invoke','goal.manage','worker.execute','tool.invoke','control.admin'])
        ON CONFLICT(id) DO NOTHING
     """)
     if token:

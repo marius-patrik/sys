@@ -48,7 +48,7 @@ def route_once() -> bool:
             WHERE event_kind=%s AND enabled ORDER BY id
         """, (row["kind"],)).fetchall()
         for sub in subscriptions:
-            action_id = row["payload"].get("action_id") if row["kind"] == "control.action" else sub["action_id"]
+            action_id = row["payload"].get("action_id") if row["kind"] in ("control.action","wake.due") else sub["action_id"]
             action = db.execute("""
                 SELECT id, revision, graph_revision, input_name FROM control_actions
                 WHERE id=%s AND enabled AND (scope_id IS NULL OR scope_id=(SELECT scope_id FROM events WHERE id=%s))
@@ -323,6 +323,21 @@ def node_once() -> bool:
                     UPDATE node_runs SET state='awaiting_child',result=NULL,child_activation_id=%s
                     WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
                 """,(child_id,task["activation_id"],task["node_id"],task["epoch"]))
+            if "_goal_create" in private:
+                new_goal=uuid.uuid5(uuid.NAMESPACE_URL,"living-goal:"+str(task["activation_id"]))
+                db.execute("""
+                  INSERT INTO goal_units(id,scope_id,title)
+                  VALUES(%s,%s,%s) ON CONFLICT DO NOTHING
+                """,(new_goal,task["scope_id"],private["_goal_create"]["title"]))
+                result["view"]["goal_id"]=str(new_goal)
+                db.execute("UPDATE node_runs SET result=%s::jsonb WHERE activation_id=%s AND node_id=%s",
+                           (json.dumps(result),task["activation_id"],task["node_id"]))
+                db.execute("""
+                  INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                  VALUES('goal.created','livingd',%s,%s,%s::jsonb,%s)
+                  ON CONFLICT(source,source_id) DO NOTHING
+                """,("goal:"+str(new_goal),task["scope_id"],
+                     json.dumps({"goal_id":str(new_goal),"text":private["_goal_create"]["title"]}),task["cause"]))
             if "_memory_write" in private:
                 claim_id=record_memory(db,task["scope_id"],private["_memory_write"],task["cause"])
                 db.execute("""
@@ -390,7 +405,8 @@ def node_once() -> bool:
 
 _sequence=itertools.count()
 def tick() -> bool:
-    steps=(route_once,deliver_once,node_once)
+    from .goals import wake_once
+    steps=(wake_once,route_once,deliver_once,node_once)
     start=next(_sequence)%len(steps)
     for shift in range(len(steps)):
         if steps[(start+shift)%len(steps)]():return True

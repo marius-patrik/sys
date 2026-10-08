@@ -159,6 +159,46 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(a["state"],"completed",a)
         self.assertEqual(a["result"]["view"]["value"],"verified output")
 
+    def test_goals_and_durable_wake_events(self):
+        from datetime import datetime,timedelta,timezone
+        from livingd.database import connect
+        self.drain()
+        unique="scheduled goal "+uuid.uuid4().hex
+        base="http://127.0.0.1:"+str(self.server.server_port)
+        headers={"Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"],
+                 "Content-Type":"application/json"}
+        def post(path,payload):
+            req=urllib.request.Request(base+path,method="POST",headers=headers,
+                data=json.dumps(payload).encode())
+            with urllib.request.urlopen(req,timeout=5) as res:return json.load(res)
+        result=post("/v1/goals",{"title":unique})
+        self.drain()
+        with connect() as db:
+            goal=db.execute("SELECT id,state FROM goal_units WHERE scope_id='dev' AND title=%s",(unique,)).fetchone()
+        self.assertEqual(goal["state"],"active")
+        future=datetime.now(timezone.utc)-timedelta(seconds=2)
+        due=post("/v1/schedule",{"goal_id":str(goal["id"]),"action_id":"living.upper",
+                                "text":"wake me","due_at":future.isoformat()})
+        self.drain()
+        with connect() as db:
+            job=db.execute("SELECT state,fired_event_id FROM scheduled_events WHERE id=%s",(due["id"],)).fetchone()
+            activation=db.execute("SELECT state,result FROM activations WHERE event_id=%s",(job["fired_event_id"],)).fetchone()
+        self.assertEqual(job["state"],"fired")
+        self.assertEqual(activation["state"],"completed")
+        self.assertEqual(activation["result"]["view"]["value"],"WAKE ME")
+        self.drain()
+        with connect() as db:
+            num=db.execute("SELECT count(*) n FROM events WHERE source='scheduler' AND source_id=%s",(due["id"],)).fetchone()["n"]
+        self.assertEqual(num,1)
+        later=datetime.now(timezone.utc)+timedelta(days=1)
+        pending=post("/v1/schedule",{"goal_id":str(goal["id"]),"action_id":"living.echo",
+                                    "text":"never wake","due_at":later.isoformat()})
+        cancelled=post("/v1/goals/"+str(goal["id"])+"/cancel",{})
+        self.assertEqual(cancelled["state"],"cancelled")
+        with connect() as db:
+            status=db.execute("SELECT state FROM scheduled_events WHERE id=%s",(pending["id"],)).fetchone()
+        self.assertEqual(status["state"],"cancelled")
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect

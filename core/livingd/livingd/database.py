@@ -66,7 +66,8 @@ def seed():
         for entry in SEED_GRAPH_CATALOG:
             db.execute("INSERT INTO graph_catalog(revision_id,description,tags) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", entry)
         for event_kind, action_id in [("surface.input","living.dispatch"),("control.action",None),
-                                       ("tool.observed","living.attend"),("source.changed","living.attend")]:
+                                       ("tool.observed","living.attend"),("source.changed","living.attend"),
+                                       ("wake.due",None)]:
             db.execute("INSERT INTO subscriptions(id, event_kind, action_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (f"bootstrap.{event_kind}", event_kind, action_id))
         for policy in [("bootstrap.tool","tool.observed",16),("bootstrap.source","source.changed",16),("bootstrap.manual","control.action",16)]:
             db.execute("INSERT INTO attention_policies(id,event_kind,min_length) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",policy)
@@ -106,6 +107,10 @@ SEED_GRAPHS = [
                 "question":{"input":"text"},"context":{"node":"recall","port":"value"}}},
             {"id":"view","capability":"view.text","inputs":{"value":{"node":"model","port":"value"}}}
         ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.goal.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"store","capability":"goal.create","inputs":{"title":{"input":"text"}}}
+        ],"outputs":{"view":{"node":"store","port":"view"}}}},
     {"id":"bootstrap.attend.1","definition":{
         "inputs":{"text":"text"},"nodes":[
             {"id":"attention","capability":"memory.attend","inputs":{"value":{"input":"text"}}}
@@ -135,10 +140,12 @@ SEED_ACTIONS=[
     ("living.compose","Propose a typed graph","bootstrap.compose.1","text"),
     ("living.python","Run isolated Python","bootstrap.python.1","text"),
     ("living.attend","Interpret observation for memory","bootstrap.attend.1","text"),
+    ("living.goal","Create durable goal","bootstrap.goal.1","text"),
     ("living.approve-memory","Approve an evidenced memory candidate","bootstrap.approve.1","text"),
 ]
 SEED_INTENT_RULES=[
     ("remember","remember ","living.remember",100),
+    ("goal","goal ","living.goal",100),
     ("recall","recall ","living.recall",100),
     ("memory-search","search memory ","living.recall",100),
     ("compose","compose ","living.compose",100),

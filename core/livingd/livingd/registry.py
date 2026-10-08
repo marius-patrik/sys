@@ -6,7 +6,7 @@ bound to them, their typed ports, versions, and grants live in the DB.
 from __future__ import annotations
 from .database import connect
 
-ADAPTERS={"pure","memory","model","control","composer","oci","dsh","graph"}
+ADAPTERS={"pure","memory","model","control","composer","oci","dsh","graph","goal"}
 SEED_CAPABILITIES=[
   ("text.echo",{"value":"text"},{"value":"text"},"pure",{"operation":"echo"},"read",[]),
   ("text.upper",{"value":"text"},{"value":"text"},"pure",{"operation":"upper"},"read",[]),
@@ -22,6 +22,7 @@ SEED_CAPABILITIES=[
   ("program.python",{"code":"text"},{"value":"text"},"oci",{"runtime":"python"},"external",["worker.execute"]),
   ("dsh.tool",{"tool":"text","arguments":"text"},{"value":"text"},"dsh",{},"external",["tool.invoke"]),
   ("graph.call",{"revision":"text","text":"text"},{"value":"text"},"graph",{},"read",["graph.invoke"]),
+  ("goal.create",{"title":"text"},{"view":"view"},"goal",{},"write",["goal.manage"]),
 ]
 
 def seeds():
