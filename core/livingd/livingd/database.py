@@ -44,24 +44,100 @@ def seed():
             VALUES ('interface.root', %s::jsonb) ON CONFLICT DO NOTHING
         """, (json.dumps({"type":"container","title":"Living Intelligence",
             "children":[{"type":"action-list","source":"control.catalog"},
-                        {"type":"activity-list","source":"control.activations"}]}),))
-        for event_kind, action_id in [ ("surface.input", "living.echo"), ("control.action", None) ]:
+                        {"type":"activity-list","source":"control.activations"},
+                        {"type":"table","title":"Pending memories","source":"memory.candidates"}]}),))
+        for rule in SEED_INTENT_RULES:
+            db.execute("INSERT INTO intent_rules(id,prefix,action_id,priority) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", rule)
+        for entry in SEED_GRAPH_CATALOG:
+            db.execute("INSERT INTO graph_catalog(revision_id,description,tags) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", entry)
+        for event_kind, action_id in [("surface.input","living.dispatch"),("control.action",None),
+                                       ("tool.observed","living.attend"),("source.changed","living.attend")]:
             db.execute("INSERT INTO subscriptions(id, event_kind, action_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (f"bootstrap.{event_kind}", event_kind, action_id))
+        for policy in [("bootstrap.tool","tool.observed",16),("bootstrap.source","source.changed",16),("bootstrap.manual","control.action",16)]:
+            db.execute("INSERT INTO attention_policies(id,event_kind,min_length) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",policy)
+        # Upgrade only the unmodified legacy v0.28 dispatcher.
+        db.execute("UPDATE subscriptions SET action_id='living.dispatch', revision=revision+1 WHERE id='bootstrap.surface.input' AND action_id='living.echo'")
 
 
 SEED_GRAPHS = [
-    {"id": "bootstrap.echo.1", "definition": {
-        "inputs": {"text": "text"}, "nodes": [
-            {"id": "echo", "capability": "text.echo", "inputs": {"value": {"input": "text"}}},
-            {"id": "view", "capability": "view.text", "inputs": {"value": {"node": "echo", "port": "value"}}}
-        ], "outputs": {"view": {"node": "view", "port": "view"}}}},
-    {"id": "bootstrap.upper.1", "definition": {
-        "inputs": {"text": "text"}, "nodes": [
-            {"id": "upper", "capability": "text.upper", "inputs": {"value": {"input": "text"}}},
-            {"id": "view", "capability": "view.text", "inputs": {"value": {"node": "upper", "port": "value"}}}
-        ], "outputs": {"view": {"node": "view", "port": "view"}}}}
+    {"id":"bootstrap.echo.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"echo","capability":"text.echo","inputs":{"value":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"echo","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.upper.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"upper","capability":"text.upper","inputs":{"value":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"upper","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.dispatch.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"dispatch","capability":"input.dispatch","inputs":{"value":{"input":"text"}}}
+        ],"outputs":{"view":{"node":"dispatch","port":"view"}}}},
+    {"id":"bootstrap.remember.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"store","capability":"memory.remember","inputs":{"value":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"store","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.recall.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"read","capability":"memory.search","inputs":{"query":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"read","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.answer.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"recall","capability":"memory.search","inputs":{"query":{"input":"text"}}},
+            {"id":"model","capability":"model.answer","inputs":{
+                "question":{"input":"text"},"context":{"node":"recall","port":"value"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"model","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.attend.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"attention","capability":"memory.attend","inputs":{"value":{"input":"text"}}}
+        ],"outputs":{"view":{"node":"attention","port":"view"}}}},
+    {"id":"bootstrap.approve.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"approval","capability":"memory.approve","inputs":{"value":{"input":"text"}}}
+        ],"outputs":{"view":{"node":"approval","port":"view"}}}},
+    {"id":"bootstrap.python.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"execute","capability":"program.python","inputs":{"code":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"execute","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}},
+    {"id":"bootstrap.compose.1","definition":{
+        "inputs":{"text":"text"},"nodes":[
+            {"id":"composer","capability":"graph.compose","inputs":{"value":{"input":"text"}}},
+            {"id":"view","capability":"view.text","inputs":{"value":{"node":"composer","port":"value"}}}
+        ],"outputs":{"view":{"node":"view","port":"view"}}}}
 ]
-SEED_ACTIONS = [
-    ("living.echo", "Echo text", "bootstrap.echo.1", "text"),
-    ("living.upper", "Uppercase text", "bootstrap.upper.1", "text"),
+SEED_ACTIONS=[
+    ("living.echo","Echo text","bootstrap.echo.1","text"),
+    ("living.upper","Uppercase text","bootstrap.upper.1","text"),
+    ("living.dispatch","Interpret input","bootstrap.dispatch.1","text"),
+    ("living.remember","Remember evidence-linked text","bootstrap.remember.1","text"),
+    ("living.recall","Search scoped memory","bootstrap.recall.1","text"),
+    ("living.ask","Answer with memory and DSH","bootstrap.answer.1","text"),
+    ("living.compose","Propose a typed graph","bootstrap.compose.1","text"),
+    ("living.python","Run isolated Python","bootstrap.python.1","text"),
+    ("living.attend","Interpret observation for memory","bootstrap.attend.1","text"),
+    ("living.approve-memory","Approve an evidenced memory candidate","bootstrap.approve.1","text"),
+]
+SEED_INTENT_RULES=[
+    ("remember","remember ","living.remember",100),
+    ("recall","recall ","living.recall",100),
+    ("memory-search","search memory ","living.recall",100),
+    ("compose","compose ","living.compose",100),
+    ("uppercase","uppercase ","living.upper",100),
+    ("echo","echo ","living.echo",100),
+    ("run-python","run python ","living.python",100),
+    ("observe","observe ","living.attend",100),
+    ("approve-memory","approve memory ","living.approve-memory",100),
+]
+SEED_GRAPH_CATALOG=[
+    ("bootstrap.echo.1","Echo input",["echo","text"]),
+    ("bootstrap.upper.1","Uppercase text",["uppercase","text"]),
+    ("bootstrap.remember.1","Store evidenced memory",["remember","memory"]),
+    ("bootstrap.recall.1","Retrieve memory",["search","memory"]),
+    ("bootstrap.answer.1","Answer using memory and model",["question","answer","model"]),
+    ("bootstrap.compose.1","Create validated graph proposal",["compose","graph"]),
 ]

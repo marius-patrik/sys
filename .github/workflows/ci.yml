@@ -38,6 +38,35 @@ jobs:
       - name: PostgreSQL-backed tests (mandatory)
         run: |
           python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
+          python -m unittest discover -s tests -p 'test_full_system.py' -v
+      - name: Live HTTP smoke test against PostgreSQL
+        run: |
+          export LIVING_DATABASE_URL="$LIVING_TEST_DATABASE_URL"
+          export LIVING_DEV_MODE=1 LIVING_MIGRATE_ON_BOOT=1
+          PYTHONPATH=core/livingd python -m livingd serve --listen 127.0.0.1:8080 > /tmp/livingd.log 2>&1 &
+          CORE_PID=$!
+          trap 'kill "$CORE_PID" 2>/dev/null || true; cat /tmp/livingd.log' EXIT
+          python scripts/smoke.py
+      - name: DSH bundle syntax
+        run: node --check plugins/dsh/living/index.js
+      - name: DSH node bridge contract
+        run: node --test tests/test_dsh_bridge.mjs
+      - name: Dynamic web renderer JavaScript syntax
+        run: |
+          python -c "from pathlib import Path; html=Path('interfaces/web/index.html').read_text(); Path('/tmp/living-view.js').write_text(html.split('<script>',1)[1].split('</script>',1)[0])"
+          node --check /tmp/living-view.js
+  oci:
+    name: Physical OCI sandbox smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull pinned Python worker runtime
+        run: docker pull python:3.12-alpine
+      - name: Exercise read-only, no-network sandbox
+        env:
+          LIVING_TEST_OCI: "1"
+        run: python3 -m unittest discover -s tests -p 'test_oci_worker.py' -v
+
   nix:
     name: Nix package build
     runs-on: ubuntu-latest
@@ -50,6 +79,12 @@ jobs:
         run: |
           nix --extra-experimental-features 'nix-command flakes' flake lock
           nix --extra-experimental-features 'nix-command flakes' build --no-link .#livingd
+          nix --extra-experimental-features 'nix-command flakes' build --no-link .#coreImage
+      - name: Load and boot the packaged OCI entrypoint
+        run: |
+          IMAGE_TAR="$(nix --extra-experimental-features 'nix-command flakes' build --print-out-paths --no-link .#coreImage)"
+          docker load -i "$IMAGE_TAR"
+          docker run --rm living-core:v0.28-dev --help
       - name: Commit pinned flake lock on the import branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/feat/living-vertical-slice'
         run: |

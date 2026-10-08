@@ -1,32 +1,31 @@
-# v0.28 implementation map
+# Implementation status
 
-This is **real source code for the first deterministic vertical slice**, not a design revision. It is not deployed or PostgreSQL-validated in the authoring environment.
+## Integrated development slice (v0.29)
 
-| v0.27 contract | Implementation |
-|---|---|
-| PostgreSQL is authoritative | `db/migrations/0001_vertical_slice.sql`; graphs, subscriptions, events, activations, Control actions/views and runs |
-| Source-idempotent event ingestion | `engine.ingest()`; `(source,source_id)` uniqueness and payload-mismatch rejection |
-| Event enqueue atomic with event commit | `AFTER INSERT events` trigger inserts `event_routing` |
-| Durable subscription routing | `engine.route_once()`; `SKIP LOCKED`, transactionally pinned action and graph revisions |
-| Event delivery → graph activation | `engine.deliver_once()`; deterministic activation UUID, one transaction |
-| Immutable graph definitions | SQL trigger prevents graph-revision UPDATE/DELETE |
-| Graph typing and dependencies | `logic.validate_graph()`, `due_nodes()`, `node_inputs()` |
-| Bounded executor with fencing | `engine._claim_node()`, `node_once()`; 20-second node lease and epoch predicate on completion |
-| Atomic causal completion records | Node output and `node.completed` insert share one PostgreSQL commit |
-| Dynamic Control actions/views | Database rows → `GET /v1/control/catalog` and `/views/{id}` |
-| Generic client | `interfaces/cli/living.py` discovers catalog; no per-action command registry |
-| Observability | `GET /v1/events/{id}`, `/v1/control/handles/{id}` and snapshot-based development SSE |
+The canonical architecture remains [architecture.md](architecture.md). The source now implements the first PostgreSQL event and deterministic DAG graph runtime, with the following experimental paths:
 
-## Explicitly absent
+- Database-owned versioned memories with direct evidence links, scoped full-text retrieval, and event-triggered attention leading to reviewable candidates. Interpretation and contradiction adjudication are not autonomous.
+- An input dispatcher driven by seeded PostgreSQL intent rules, plus validated, read-only graph proposals published as dynamic actions with immutable revisions.
+- A model node that calls the configured single DSH bridge, with a mock DSH HTTP node server used in CI. The installed DSH runtime and actual model provider must be configured separately.
+- One dynamically discovered action catalog used by HTTP, CLI, TUI, web workspace and MCP tool projection.
+- A separate OCI broker can execute Python without networking or filesystem mounts, with a real Docker isolation CI job; the core never mounts the deployment engine socket.
+- The PostgreSQL routing, node scheduling, step fencing, and durable activation state remain the existing runtime's foundation.
 
-This slice does not execute or claim to validate: score-based attention for optional observations, semantic memory, graph search/model-driven composition, branches, typed side effects, outbox, real authentication, PostgreSQL row-level tenant security, DSH/LiteLLM, independent OCI engine, GUI/TUI/MCP, cross-instance failover and production-grade subscriber streaming. The v0.27 reference-policy tests are preserved under `contracts/` but not wired into this runtime. It would be incorrect to present their passing result as proof that the policy runs.
+## Explicitly not implemented
 
-The implementation intentionally supports only input/control events and read-only deterministic operations, to validate durable event → subscription → activation → node → committed result before expanding the runtime. Its runtime is a Python bootstrap packaged by Nix, replacing the former nonfunctional Rust health-server stub for this isolated slice; no inference that the production language has been definitively selected.
+Unbounded/general-purpose graph synthesis (the model-assisted composer is type- and capability-restricted); semantic model-based memory extraction and contradiction adjudication; general multi-language OCI toolchains (Python execution through a separate broker is implemented); mature MCP session handling and MCP Apps; production authentication and per-user authorization; autonomous lifelong learning.
 
-## Gates
+CI uses a real PostgreSQL service and a deterministic fake DSH model endpoint. An end-to-end mock test does not establish successful live DSH integration or production readiness. The single DSH bundle exports a real ctx.llm.stream bridge, but its integration with a pinned upstream DSH installation still needs a provider-backed deployment test.
 
-**Static/unit test gate:** execute `python3 -m unittest discover -s tests -p 'test_engine_*.py' -v` and `python3 contracts/test_contracts.py`.
+## Test
 
-**Real database gate:** provide PostgreSQL 16+, install `psycopg` 3 or enter Nix dev shell, set `LIVING_TEST_DATABASE_URL`, and run `python3 -m unittest discover -s tests -p 'test_postgres_integration.py' -v`. Both tests must execute rather than skip. Test idempotent ingest, routed activation, two committed nodes, emitted events, final view, and durable replay. Then run a real Compose/Nix build and test service restarts. Those gates cannot be marked green until an actual server/build environment is available.
+Run `python -m unittest discover -s tests -p 'test_full_system.py' -v` with `LIVING_TEST_DATABASE_URL` set, or review GitHub Actions logs for the PostgreSQL integration job.
+## Live smoke test
 
-**Next implementation increment:** PostgreSQL-owned memory tables/queries and explicit versioned memory-attention subscriptions, then the graph composer and single DSH execution plugin. Implement real auth and effect authorization before any public deployment.
+With the development core running, use `python scripts/smoke.py`. The same test runs in CI with real PostgreSQL and verifies HTTP, memory, graph composition, the Control catalog, MCP and web serving.
+
+## Real DSH model node
+
+Install upstream DeepSeek Harness and configure a provider/model in its DSH profile. Install the sole `plugins/dsh/living` bundle with the documented `dsh plugin --profile <profile> add <path>` command. Configure `LIVING_DSH_TOKEN`, `LIVING_DSH_PORT=8090`, `LIVING_DSH_PROVIDER`, and `LIVING_DSH_MODEL`. Start that DSH profile. Set `LIVING_DSH_URL` and the same token in the core. The plugin calls `ctx.llm.stream()` directly; no DSH React-loop step selects graph nodes.
+
+CI uses a fake DSH LLM provider to test the plugin and a mock HTTP server to test core-to-bridge requests. Real model-provider integration is not yet verified without actual provider configuration.
