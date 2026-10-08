@@ -1,0 +1,29 @@
+name: Bootstrap source import
+on:
+  push:
+    branches: [feat/living-vertical-slice]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Expand migration source
+        shell: bash
+        run: |
+          if [ ! -f bootstrap.b64 ]; then
+            echo "No import archive present"
+            exit 0
+          fi
+          base64 --decode bootstrap.b64 > /tmp/living-source.tar.xz
+          tar -xJf /tmp/living-source.tar.xz -C .
+          rm bootstrap.b64 .github/workflows/bootstrap-import.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: import Living Intelligence architecture and vertical slice"
+          git push origin HEAD:feat/living-vertical-slice
