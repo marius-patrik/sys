@@ -74,20 +74,19 @@ jobs:
     name: Nix package build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v17
       - name: Evaluate and build livingd
         run: |
-          nix --extra-experimental-features 'nix-command flakes' flake lock
-          nix --extra-experimental-features 'nix-command flakes' build --no-link .#livingd
+          nix --extra-experimental-features 'nix-command flakes' build --no-write-lock-file --no-link .#livingd
           nix --extra-experimental-features 'nix-command flakes' build --no-link .#coreImage
       - name: Load and boot the packaged OCI entrypoint
         run: |
           IMAGE_TAR="$(nix --extra-experimental-features 'nix-command flakes' build --print-out-paths --no-link .#coreImage)"
           docker load -i "$IMAGE_TAR"
-          docker run --rm living-core:v0.28-dev --help
+          docker run --rm living-core:dev --help
       - name: Packaged core and real database end-to-end
         shell: bash
         run: |
@@ -108,7 +107,7 @@ jobs:
             -e LIVING_SEAL_KEY="$(cat .private/living_seal_key)" \
             -e LIVING_BOOTSTRAP_TOKEN="$(cat .private/living_control_token)" \
             -e LIVING_LISTEN=0.0.0.0:8080 -e LIVING_DEV_MODE=1 \
-            -e LIVING_MIGRATE_ON_BOOT=1 living-core:v0.28-dev
+            -e LIVING_MIGRATE_ON_BOOT=1 living-core:dev
           ready=0
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then ready=1; break; fi
@@ -117,13 +116,3 @@ jobs:
           if [ "$ready" -ne 1 ]; then docker logs living-ci-core; exit 1; fi
           python3 scripts/smoke.py
           docker rm -f living-ci-core living-ci-postgres
-      - name: Commit pinned flake lock on the import branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/living-vertical-slice'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add flake.lock
-          if ! git diff --cached --quiet; then
-            git commit -m "build: pin Nix dependency versions"
-            git push origin HEAD:feat/living-vertical-slice
-          fi

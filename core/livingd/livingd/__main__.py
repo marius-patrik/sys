@@ -25,7 +25,7 @@ class Handler(BaseHTTPRequestHandler):
         if p is None:raise AuthenticationError('authentication required')
         if grant:need(p,grant)
         return p
-    server_version = 'livingd/0.29-dev'
+    server_version = 'livingd/dev'
     def log_message(self, *args):
         pass
     def respond(self, code, payload):

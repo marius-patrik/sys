@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: living-core:v0.28-dev
+    image: living-core:dev
     environment:
       LIVING_DATABASE_URL_FILE: /run/secrets/living_database_url
       LIVING_SEAL_KEY_FILE: /run/secrets/living_seal_key
