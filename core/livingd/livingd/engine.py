@@ -107,7 +107,7 @@ def deliver_once() -> bool:
                 (WITH RECURSIVE chain AS (
                     SELECT id,causation_event_id FROM events WHERE id=%s
                     UNION ALL SELECT e.id,e.causation_event_id FROM events e JOIN chain c ON e.id=c.causation_event_id
-                ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1)),%s::jsonb
+                ) SELECT id FROM chain WHERE causation_event_id IS NULL LIMIT 1),%s::jsonb)
             ON CONFLICT DO NOTHING
         """,(activation_id,row["event_id"],row["target_graph_revision"],row["scope_id"],
               json.dumps({row["target_input_name"]:value}),row["principal_id"],list(grants),row["event_id"],json.dumps({n["capability"]:manifest[n["capability"]] for n in graph["definition"]["nodes"]})))
