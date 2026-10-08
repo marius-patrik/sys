@@ -162,5 +162,10 @@ class FullSystemIntegration(unittest.TestCase):
         _,raw=self.read("/v1/control/activity")
         self.assertIsInstance(json.loads(raw)["activations"],list)
         self.assertIn("tools",self.post("/mcp",{"jsonrpc":"2.0","id":8,"method":"tools/list"})["result"])
+        _,view_data=self.read("/v1/control/views/interface.root")
+        view=json.loads(view_data)["definition"]
+        self.assertTrue(any(child.get("type")=="table" for child in view["children"]))
+        _,table=self.read("/v1/control/data/memory.candidates")
+        self.assertIn("rowActions",json.loads(table))
 
 if __name__=="__main__":unittest.main()

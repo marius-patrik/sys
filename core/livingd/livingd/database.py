@@ -44,7 +44,8 @@ def seed():
             VALUES ('interface.root', %s::jsonb) ON CONFLICT DO NOTHING
         """, (json.dumps({"type":"container","title":"Living Intelligence",
             "children":[{"type":"action-list","source":"control.catalog"},
-                        {"type":"activity-list","source":"control.activations"}]}),))
+                        {"type":"activity-list","source":"control.activations"},
+                        {"type":"table","title":"Pending memories","source":"memory.candidates"}]}),))
         for rule in SEED_INTENT_RULES:
             db.execute("INSERT INTO intent_rules(id,prefix,action_id,priority) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", rule)
         for entry in SEED_GRAPH_CATALOG:
