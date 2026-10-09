@@ -426,6 +426,71 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(reply["result"]["status"],"failed")
         self.assertTrue(reply["result"]["result"]["isError"])
 
+    def test_private_nested_graph_cannot_run_in_another_scope(self):
+        from livingd.database import connect
+        from livingd.engine import ingest, route_once, deliver_once, node_once
+        from livingd.control import register_graph
+        from livingd.registry import catalog, visible_graph
+        from livingd.logic import validate_graph
+        self.drain()
+        unique=uuid.uuid4().hex
+        scope="private-scope-"+unique
+        private_revision="private.graph."+unique
+        parent_revision="foreign.child."+unique
+        parent_action="test.foreign."+unique
+        private_graph={
+            "inputs":{"text":"text"},
+            "nodes":[{"id":"upper","capability":"text.upper",
+                      "inputs":{"value":{"input":"text"}}},
+                     {"id":"view","capability":"view.text",
+                      "inputs":{"value":{"node":"upper","port":"value"}}}],
+            "outputs":{"view":{"node":"view","port":"view"}}}
+        caller_graph={
+            "inputs":{"text":"text"},
+            "nodes":[{"id":"child","capability":"graph.call",
+                      "inputs":{"revision":{"literal":private_revision},
+                                "text":{"input":"text"}}},
+                     {"id":"view","capability":"view.text",
+                      "inputs":{"value":{"node":"child","port":"value"}}}],
+            "outputs":{"view":{"node":"view","port":"view"}}}
+        with connect() as db:
+            db.execute("INSERT INTO graph_revisions(id,definition) VALUES(%s,%s::jsonb)",
+                       (private_revision,json.dumps(private_graph)))
+            db.execute("""
+                INSERT INTO graph_catalog(revision_id,description,scope_id)
+                VALUES(%s,'Private workspace procedure',%s)
+            """,(private_revision,scope))
+            self.assertIsNone(visible_graph(db,private_revision,"dev"))
+            self.assertIsNotNone(visible_graph(db,private_revision,scope))
+            self.assertIsNotNone(visible_graph(db,"bootstrap.upper.1","dev"))
+            with self.assertRaisesRegex(ValueError,"unavailable in this scope"):
+                register_graph(db,{"id":"local-owner","scope_id":"dev",
+                    "grants":["graph.invoke","control.admin"]},
+                    {"title":"Inaccessible graph","definition":caller_graph})
+            # Simulate a dynamic revision supplied by a node at runtime. A graph
+            # can be structurally valid without permission to invoke its target.
+            validate_graph(caller_graph,catalog(db))
+            db.execute("INSERT INTO graph_revisions(id,definition) VALUES(%s,%s::jsonb)",
+                       (parent_revision,json.dumps(caller_graph)))
+            db.execute("""
+                INSERT INTO control_actions(id,title,graph_revision,input_name,scope_id)
+                VALUES(%s,'Foreign graph attempt',%s,'text','dev')
+            """,(parent_action,parent_revision))
+        event=ingest("control.action","scope-escape",unique,"dev",
+                     {"action_id":parent_action,"text":"private"})
+        self.assertTrue(route_once())
+        self.assertTrue(deliver_once())
+        self.assertTrue(node_once())
+        with connect() as db:
+            activation=db.execute("SELECT id FROM activations WHERE event_id=%s",(event,)).fetchone()
+            child=db.execute("SELECT count(*) AS n FROM activations WHERE parent_activation_id=%s",
+                             (activation["id"],)).fetchone()
+            node=db.execute("SELECT state,error FROM node_runs WHERE activation_id=%s AND node_id='child'",
+                            (activation["id"],)).fetchone()
+        self.assertEqual(child["n"],0)
+        self.assertEqual(node["state"],"retry_wait")
+        self.assertIn("unavailable in this scope",node["error"])
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect

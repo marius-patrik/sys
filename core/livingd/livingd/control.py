@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from .logic import validate_graph
-from .registry import ADAPTERS,catalog,authorize,validate_adapter_contract
+from .registry import ADAPTERS,catalog,authorize,validate_adapter_contract,visible_graph
 
 IDENT=re.compile(r"^[a-z][a-z0-9._-]{2,127}$")
 PORTS={"text","view"}
@@ -61,7 +61,13 @@ def register_graph(db,principal:dict,data:dict)->dict:
     manifest=catalog(db)
     validate_graph(graph,manifest)
     for node in graph["nodes"]:
-        authorize(principal["scope_id"],manifest[node["capability"]],set(principal["grants"]))
+        entry=manifest[node["capability"]]
+        authorize(principal["scope_id"],entry,set(principal["grants"]))
+        if entry["adapter"]=="graph":
+            revision_input=node["inputs"].get("revision",{})
+            if "literal" in revision_input and not visible_graph(
+                    db,revision_input["literal"],principal["scope_id"]):
+                raise ValueError("nested graph revision unavailable in this scope")
     bound=graph["outputs"]["view"]
     producer=next(n for n in graph["nodes"] if n["id"]==bound["node"])
     if manifest[producer["capability"]]["out"].get(bound["port"])!="view":

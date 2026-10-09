@@ -77,3 +77,18 @@ def catalog(db=None)->dict:
 def authorize(scope:str,entry:dict,grants:set[str])->None:
     missing=set(entry["grants"])-grants
     if missing:raise PermissionError("capability requires grants: "+",".join(sorted(missing)))
+
+def visible_graph(db, revision:str, scope:str)->dict|None:
+    """Resolve only enabled global or current-workspace graph revisions.
+
+    Visibility is checked at call time and again during the fenced child commit.
+    A graph revision existing in storage never implies access to its contents.
+    """
+    if not isinstance(revision,str) or not revision or not isinstance(scope,str):
+        return None
+    return db.execute("""
+        SELECT g.definition FROM graph_revisions g
+        JOIN graph_catalog c ON c.revision_id=g.id
+        WHERE g.id=%s AND c.enabled AND (c.scope_id IS NULL OR c.scope_id=%s)
+    """,(revision,scope)).fetchone()
+
