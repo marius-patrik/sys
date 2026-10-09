@@ -60,7 +60,14 @@ def seed():
                          "fields":[{"name":"base_url","label":"Gateway URL","type":"url","required":True},
                                    {"name":"api_key","label":"Virtual API key","type":"password"}]},
                         {"type":"model-picker","title":"LiteLLM Models","models":"/v1/models",
-                         "selection":"/v1/models/selection","endpoint":"/v1/models/selection"}]}),))
+                         "selection":"/v1/models/selection","endpoint":"/v1/models/selection"},
+                        {"type":"table","title":"Goals","source":"goals"},
+                        {"type":"form","title":"Daily Resource Budgets",
+                         "endpoint":"/v1/settings/budgets",
+                         "fields":[{"name":"model_calls","label":"LiteLLM calls per UTC day",
+                                    "type":"number","required":True},
+                                   {"name":"external_calls","label":"OCI/DSH calls per UTC day",
+                                    "type":"number","required":True}]}]}),))
         for rule in SEED_INTENT_RULES:
             db.execute("INSERT INTO intent_rules(id,prefix,action_id,priority) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", rule)
         for entry in SEED_GRAPH_CATALOG:

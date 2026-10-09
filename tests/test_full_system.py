@@ -247,6 +247,7 @@ class FullSystemIntegration(unittest.TestCase):
         view=json.loads(view_data)["definition"]
         self.assertTrue(any(child.get("type")=="table" for child in view["children"]))
         self.assertTrue(any(child.get("endpoint")=="/v1/settings/budgets" for child in view["children"]))
+        self.assertTrue(any(child.get("source")=="goals" for child in view["children"]))
         _,budget_response=self.read("/v1/settings/budgets")
         self.assertIn("model_calls",json.loads(budget_response)["limits"])
         _,table=self.read("/v1/control/data/memory.candidates")
