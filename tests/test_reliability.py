@@ -277,6 +277,94 @@ class CorrectnessTests(unittest.TestCase):
         self.assertTrue(all(row["state"]=="completed" for row in rows),rows)
         self.assertTrue(all(row["nodes"]==2 for row in rows))
 
+    def test_scheduler_does_not_starve_new_work_behind_waiting_page(self):
+        from livingd.engine import ingest,route_once,deliver_once,_claim_node
+        from livingd.database import connect
+        self.drain()
+        source=ingest("test.no-op","reliability",uuid.uuid4().hex,"dev",{"text":"not routed"})
+        blockers=[uuid.uuid4() for _ in range(40)]
+        try:
+            with connect() as db:
+                for activation_id in blockers:
+                    db.execute("""
+                      INSERT INTO activations(id,event_id,graph_revision,scope_id,inputs,state,principal_id)
+                      VALUES(%s,%s,'bootstrap.upper.1','dev','{"text":"blocked"}','running','local-owner')
+                    """,(activation_id,source))
+                    db.execute("""
+                      INSERT INTO node_runs(activation_id,node_id,state,lease_epoch,lease_until)
+                      VALUES(%s,'upper','leased',1,now()+interval '1 hour')
+                    """,(activation_id,))
+            target=ingest("control.action","reliability",uuid.uuid4().hex,"dev",
+                          {"action_id":"living.upper","text":"eventual"})
+            for _ in range(20):
+                route_once()
+                with connect() as db:
+                    routing=db.execute("SELECT state FROM event_routing WHERE event_id=%s",(target,)).fetchone()
+                if routing["state"]=="routed":break
+            self.assertEqual(routing["state"],"routed")
+            self.assertTrue(deliver_once())
+            # The first scheduling page contains only older waiting nodes.
+            self.assertIsNone(_claim_node())
+            # Inspecting that page rotates its position; the next claim reaches new work.
+            task=_claim_node()
+            self.assertIsNotNone(task)
+            self.assertEqual(task["node_id"],"upper")
+            self.assertEqual(task["cause"],target)
+        finally:
+            with connect() as db:
+                db.execute("DELETE FROM node_runs WHERE activation_id=ANY(%s)",(blockers,))
+                db.execute("DELETE FROM activations WHERE id=ANY(%s)",(blockers,))
+        with connect() as db:
+            db.execute("""
+                UPDATE node_runs SET result='{"value":"EVENTUAL"}'::jsonb,
+                  state='completed',lease_until=NULL
+                WHERE activation_id=%s AND node_id='upper'
+            """,(task["activation_id"],))
+        self.drain()
+        with connect() as db:
+            row=db.execute("SELECT state,result FROM activations WHERE event_id=%s",(target,)).fetchone()
+        self.assertEqual(row["state"],"completed")
+        self.assertEqual(row["result"]["view"]["value"],"EVENTUAL")
+
+    def test_insufficient_grant_fails_delivery_and_mcp_task(self):
+        from livingd.engine import ingest,route_once,deliver_once
+        from livingd.database import connect
+        from livingd.mcp import handle
+        self.drain()
+        principal_id="limited-"+uuid.uuid4().hex
+        with connect() as db:
+            db.execute("""
+                INSERT INTO control_principals(id,scope_id,grants)
+                VALUES(%s,'dev',ARRAY['control.invoke'])
+            """,(principal_id,))
+        event=ingest("control.action","reliability",uuid.uuid4().hex,"dev",
+             {"action_id":"living.remember","text":"should not store"},
+             principal_id=principal_id)
+        self.assertTrue(route_once())
+        self.assertTrue(deliver_once())
+        with connect() as db:
+            delivery=db.execute("SELECT state,reason FROM event_deliveries WHERE event_id=%s",(event,)).fetchone()
+        self.assertEqual(delivery["state"],"failed")
+        self.assertIn("grant",delivery["reason"])
+        url="http://127.0.0.1:"+str(self.server.server_port)+"/v1/events/"+str(event)
+        req=urllib.request.Request(url,headers={
+            "Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"]})
+        with urllib.request.urlopen(req,timeout=5) as res:result=json.load(res)
+        self.assertEqual(result["status"],"failed")
+        self.assertTrue(result["terminal"])
+        self.assertEqual(result["failures"][0]["reason"],delivery["reason"])
+        with connect() as db:
+            task_id=uuid.uuid4()
+            db.execute("""
+                INSERT INTO mcp_tasks(id,event_id,scope_id,principal_id)
+                VALUES(%s,%s,'dev','local-owner')
+            """,(task_id,event))
+            owner=db.execute("SELECT id,scope_id,grants FROM control_principals WHERE id='local-owner'").fetchone()
+        reply=handle({"jsonrpc":"2.0","id":1,"method":"tasks/get",
+                      "params":{"taskId":str(task_id)}},owner)
+        self.assertEqual(reply["result"]["status"],"failed")
+        self.assertTrue(reply["result"]["result"]["isError"])
+
     def test_nested_graph_continuation(self):
         from livingd.engine import ingest
         from livingd.database import connect

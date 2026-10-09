@@ -101,7 +101,7 @@ def deliver_once() -> bool:
                 authorize(row["scope_id"],manifest[node["capability"]],grants)
             if graph["definition"]["inputs"].get(row["target_input_name"]) != "text":
                 raise ValueError("incompatible action input")
-        except (ValueError,KeyError) as exc:
+        except (ValueError,KeyError,PermissionError) as exc:
             db.execute("""
                 UPDATE event_deliveries SET state='failed',reason=%s
                 WHERE event_id=%s AND subscription_id=%s AND subscription_revision=%s
@@ -132,7 +132,7 @@ def _claim_node():
             SELECT a.id, a.graph_revision, a.inputs, a.scope_id, a.event_id,a.grants,a.capability_pins, g.definition
             FROM activations a JOIN graph_revisions g ON g.id=a.graph_revision
             WHERE a.state IN ('pending','running')
-            ORDER BY a.created_at, a.id LIMIT 32 FOR UPDATE OF a SKIP LOCKED
+            ORDER BY a.scheduler_checked_at, a.created_at, a.id LIMIT 32 FOR UPDATE OF a SKIP LOCKED
         """).fetchall()
         for a in activations:
             g = a["definition"]
@@ -210,11 +210,16 @@ def _claim_node():
                    VALUES(%s,%s,%s,%s,'running',%s)
                    ON CONFLICT(activation_id,node_id) DO NOTHING
                 """,(effect_id,a["id"],node_id,node["capability"],str(effect_id)))
-            db.execute("UPDATE activations SET state='running',updated_at=now() WHERE id=%s", (a["id"],))
+            db.execute("UPDATE activations SET state='running',updated_at=now(),scheduler_checked_at=now() WHERE id=%s", (a["id"],))
             outputs = {r["node_id"]: r["result"] for r in rows if r["state"] == 'completed'}
             args = node_inputs(g, node_id, a["inputs"], outputs)
             return {"finalized": False, "activation_id":a["id"],"node_id":node_id,"epoch":epoch,
                     "capability":node["capability"], "args":args,"scope_id":a["scope_id"],"cause":a["event_id"],"manifest":entry}
+        # Even if 32 old activations are waiting for leases, newer activations
+        # must eventually enter the scheduling window.
+        if activations:
+            db.execute("UPDATE activations SET scheduler_checked_at=now() WHERE id=ANY(%s)",
+                       ([a["id"] for a in activations],))
         return None
 
 

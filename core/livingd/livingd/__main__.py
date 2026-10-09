@@ -382,9 +382,21 @@ class Handler(BaseHTTPRequestHandler):
                         SELECT (SELECT count(*) FROM event_routing r JOIN lineage l ON l.id=r.event_id WHERE r.state<>'routed')
                           + (SELECT count(*) FROM event_deliveries d JOIN lineage l ON l.id=d.event_id WHERE d.state IN ('pending','leased')) AS pending
                     """,(event_id,scope,scope)).fetchone()
+                    failures=db.execute(chain+"""
+                        SELECT d.event_id,d.subscription_id,d.reason
+                        FROM event_deliveries d JOIN lineage l ON l.id=d.event_id
+                        WHERE d.state='failed'
+                        ORDER BY d.event_id,d.subscription_id
+                    """,(event_id,scope,scope)).fetchall()
                 terminal=not pending['pending'] and (not activations or all(
                     a['state'] in ('completed','failed','cancelled','suspended') for a in activations))
-                return self.respond(200,{'event':e,'activations':activations,'terminal':terminal})
+                failed=bool(failures) or any(a['state']=='failed' for a in activations)
+                status=('failed' if failed else 'cancelled' if
+                        any(a['state']=='cancelled' for a in activations) else
+                        'suspended' if any(a['state']=='suspended' for a in activations)
+                        else 'completed' if terminal else 'working')
+                return self.respond(200,{'event':e,'activations':activations,
+                                        'failures':failures,'status':status,'terminal':terminal})
             if self.path.startswith('/v1/control/handles/'):
                 activation_id=uuid.UUID(self.path.removeprefix('/v1/control/handles/'))
                 with connect() as db:

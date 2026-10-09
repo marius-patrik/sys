@@ -48,6 +48,18 @@ def _lineage(db,event_id,scope):
     """,(event_id,scope,scope)).fetchone()
     return entries,pending["n"]
 
+def _failed_deliveries(db,event_id,scope):
+    return db.execute("""
+        WITH RECURSIVE lineage AS (
+          SELECT id,0 depth FROM events WHERE id=%s AND scope_id=%s
+          UNION ALL SELECT e.id,l.depth+1 FROM events e JOIN lineage l
+            ON e.causation_event_id=l.id
+            WHERE e.scope_id=%s AND l.depth<32
+        )
+        SELECT d.reason FROM event_deliveries d JOIN lineage l ON l.id=d.event_id
+        WHERE d.state='failed' ORDER BY d.event_id LIMIT 5
+    """,(event_id,scope,scope)).fetchall()
+
 def _task(db,task_id,principal):
     try:uid=uuid.UUID(task_id)
     except (ValueError,TypeError):return None
@@ -58,7 +70,8 @@ def _task(db,task_id,principal):
 
 def _state(db,task,principal):
     runs,pending=_lineage(db,task["event_id"],principal["scope_id"])
-    failed=any(x["state"]=="failed" for x in runs)
+    delivery_errors=_failed_deliveries(db,task["event_id"],principal["scope_id"])
+    failed=bool(delivery_errors) or any(x["state"]=="failed" for x in runs)
     cancelled=any(x["state"]=="cancelled" for x in runs)
     active=bool(pending) or not runs or any(
         x["state"] in ("pending","running","suspended") for x in runs)
@@ -66,7 +79,9 @@ def _state(db,task,principal):
     completed=[a["result"] for a in runs if a["state"]=="completed" and a["result"]]
     value=completed[-1] if completed else None
     if value and isinstance(value.get("view"),dict):value=value["view"].get("value",value)
-    if value is None:value="Task did not produce a view"
+    if value is None:
+        value=("; ".join(str(r["reason"]) for r in delivery_errors)
+               if delivery_errors else "Task did not produce a view")
     updated=max((x["updated_at"] for x in runs),default=task["created_at"])
     return {"resultType":"complete","taskId":str(task["id"]),"status":status,
             "createdAt":task["created_at"].isoformat(),"lastUpdatedAt":updated.isoformat(),
