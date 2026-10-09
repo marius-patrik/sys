@@ -13,6 +13,7 @@ from .runtime import execute
 from .memory import record as record_memory
 from .composer import install as install_proposal
 from .registry import catalog,authorize,visible_graph
+from .budgets import reserve,BudgetExceeded
 
 log = logging.getLogger(__name__)
 
@@ -229,6 +230,21 @@ def _claim_node():
                 db.execute("UPDATE activations SET state='suspended' WHERE id=%s",(a['id'],))
                 db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND node_id=%s AND state='running'",(a['id'],node_id))
                 return {'finalized':True}
+            if entry["effect"]=="external":
+                try:
+                    reserve(db,a["scope_id"],"external")
+                except BudgetExceeded as exc:
+                    db.execute("""
+                      UPDATE activations SET state='failed',result=%s::jsonb,updated_at=now()
+                      WHERE id=%s AND state IN ('pending','running')
+                    """,(json.dumps({"error":str(exc)}),a["id"]))
+                    db.execute("""
+                      INSERT INTO events(kind,source,source_id,scope_id,payload,causation_event_id)
+                      VALUES('activation.budget_exceeded','livingd',%s,%s,%s::jsonb,%s)
+                      ON CONFLICT(source,source_id) DO NOTHING
+                    """,("budget:"+str(a["id"])+":"+node_id,a["scope_id"],
+                         json.dumps({"activation_id":str(a["id"]),"reason":str(exc)}),a["event_id"]))
+                    return {"finalized":True}
             epoch = previous["lease_epoch"] + 1 if previous else 1
             db.execute("""
                 INSERT INTO node_runs(activation_id,node_id,lease_epoch,lease_until)
@@ -289,7 +305,7 @@ def node_once() -> bool:
         log.warning("graph node %s.%s failed: %s",task["activation_id"],task["node_id"],exc)
         with connect() as db:
             effect=task["manifest"]["effect"]
-            retryable=effect in ("read","inference")
+            retryable=effect in ("read","inference") and not isinstance(exc,BudgetExceeded)
             state='uncertain' if effect=='external' else 'retry_wait' if retryable and task["epoch"]<3 else 'failed'
             row=db.execute("""
                 UPDATE node_runs SET state=%s,error=%s,lease_until=NULL,

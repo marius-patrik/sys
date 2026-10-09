@@ -45,6 +45,6 @@ Memory retrieval is scope-filtered PostgreSQL full-text search with bounded cont
 
 ## Security and verification contract
 
-Bearer tokens map to database principals, scopes and grants. Admins can register typed capabilities and graphs, manage database-encrypted credentials, and inspect/reconcile effects. Development tokens and loopback binding do not replace production identity, isolation, auditing or cost budgets.
+Bearer tokens map to database principals, scopes and grants. Admins can register typed capabilities and graphs, manage database-encrypted credentials, and inspect/reconcile effects. PostgreSQL atomically enforces daily per-scope call ceilings for LiteLLM requests and OCI/DSH effects. These are call-volume limits, not token or monetary spend limits. Development tokens and loopback binding do not replace production identity, isolation, auditing or price-aware budgets.
 
-GitHub Actions uses real PostgreSQL, fault-injected stale leases, subprocess restarts, concurrent workers, a real OCI sandbox and Nix-built image; model and DSH services are tested via protocol-compatible mocks. **Real model-provider and upstream DSH installation tests require a separate provisioned environment**. Never claim full-system readiness from a green mock-only run.
+GitHub Actions verifies PostgreSQL fault recovery, concurrent workers, a real OCI sandbox and Nix-built image; it also boots a real LiteLLM proxy against a deterministic local upstream. DSH remains mocked. **Real third-party model accounts and a complete upstream DSH installation remain unverified.**

@@ -26,7 +26,7 @@ The Control API derives operations and views from PostgreSQL. Every input is a d
 
 ## Models and integration credentials
 
-In the GUI, open **LiteLLM Connection**, enter a gateway URL and virtual key, then select an advertised model. Only LiteLLM supplies model IDs, through `/v1/models`. The key and model preferences are stored in PostgreSQL; keys are encrypted with the bootstrap key in `.private/living_seal_key`. The DB login and the encryption root necessarily stay outside the encrypted database.
+In the GUI, open **LiteLLM Connection**, enter a gateway URL and virtual key, then select an advertised model. Only LiteLLM supplies model IDs, through `/v1/models`. The key, model preferences and daily call budgets are stored in PostgreSQL; keys are encrypted with the bootstrap key in `.private/living_seal_key`. The DB login and the encryption root necessarily stay outside the encrypted database.
 
 For local API access:
 

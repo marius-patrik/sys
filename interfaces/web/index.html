@@ -68,6 +68,7 @@ function component(def,catalog){
       const input=node("input");
       input.type=field.type||"text";input.name=field.name;
       input.required=Boolean(field.required);
+      if(input.type==="number"){input.min="0";input.step="1";}
       input.autocomplete=field.type==="password"?"off":"on";
       input.style.display="block";input.style.width="95%";
       label.append(input);form.append(label);inputs[field.name]=input;
@@ -77,7 +78,7 @@ function component(def,catalog){
       e.preventDefault();
       const payload={};
       for(const [name,input] of Object.entries(inputs)){
-        if(input.value!==""||input.required)payload[name]=input.value;
+        if(input.value!==""||input.required)payload[name]=input.type==="number"?Number(input.value):input.value;
       }
       try{
         const result=await api(def.endpoint,{method:"POST",

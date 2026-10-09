@@ -103,6 +103,12 @@ class Handler(BaseHTTPRequestHandler):
                       VALUES('control.definition_changed','control.admin',%s,%s,%s::jsonb,%s)
                     """,(uuid.uuid4().hex,scope,json.dumps(result),principal['id']))
                 return self.respond(201,result)
+            if self.path == '/v1/settings/budgets':
+                need(principal,'control.admin')
+                from .budgets import configure
+                with connect() as db:
+                    budget=configure(db,scope,body.get('model_calls'),body.get('external_calls'))
+                return self.respond(200,budget)
             if self.path == '/v1/settings/litellm':
                 need(principal,'control.admin')
                 with connect() as db:
@@ -264,6 +270,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path not in ('/','/index.html','/healthz'):
                 principal=self.principal('control.invoke')
                 scope=principal['scope_id']
+            if self.path == '/v1/settings/budgets':
+                need(principal,'control.admin')
+                from .budgets import status
+                with connect() as db:result=status(db,scope)
+                return self.respond(200,result)
             if self.path == '/v1/settings/litellm':
                 with connect() as db:result=gateway_status(db,scope)
                 return self.respond(200,result)

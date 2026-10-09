@@ -60,3 +60,7 @@ Capabilities are resolved from PostgreSQL for the caller's workspace. The built-
 ## Revocation semantics
 
 The executor rechecks the database principal before each node claim and at fenced completion, comparing enabled status, scope and grants with the activation's original authorization snapshot. Disabling a principal or removing a captured grant cancels outstanding work. An external effect already dispatched cannot be undone and is recorded as **uncertain** for reconciliation; its result is never silently committed. Token revocation blocks future API access, while an active unit is stopped by principal disablement or grant revocation. The CI fault test simulates revocation between node execution and result commit.
+
+## Database resource budgets
+
+For each scope, PostgreSQL stores a versioned daily policy and atomic UTC-day counters. By default, a new scope permits **100 model calls and 10 external calls per UTC day** until an admin changes the limits at `GET/POST /v1/settings/budgets`. Model reservations occur inside the LiteLLM gateway path, covering answers, composition, and optional memory extraction; external reservations are made by the durable scheduler before invoking OCI or DSH. Exceeding a limit fails the activation rather than dispatching the effect. Counters account for attempts, including unsuccessful calls, and are serializable across concurrent workers. These are call-volume ceilings, **not currency/token-spend accounting**. The database may be upgraded to track provider-reported token usage and prices as a separate policy.
