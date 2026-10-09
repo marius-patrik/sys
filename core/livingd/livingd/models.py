@@ -158,6 +158,11 @@ def generate(scope:str,purpose:str,question:str,context:str)->str:
     if not ids:raise ModelGatewayError("LiteLLM returned no models")
     chosen=preferred.get(purpose) or preferred.get("default") or offered[0]["id"]
     if chosen not in ids:raise ModelGatewayError("selected model is no longer advertised by LiteLLM")
+    # Reserve in PostgreSQL before issuing a potentially billable request.
+    # The same budget covers direct answers, composition and memory extraction.
+    from .budgets import reserve
+    with connect() as db:
+        reserve(db,scope,"model")
     result=_request(base+"/v1/chat/completions",key,{
         "model":chosen,"stream":False,"max_tokens":1200,
         "messages":[

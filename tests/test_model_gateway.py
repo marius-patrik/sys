@@ -65,6 +65,42 @@ class ModelGatewayTests(unittest.TestCase):
         with connect() as db:
             configure_gateway(db,scope,"http://127.0.0.1:"+str(self.proxy.server_port),clear_key=True)
             self.assertIsNone(read_credential(db,scope,"litellm.api_key"))
+    def test_model_requests_respect_atomic_postgresql_budgets(self):
+        import uuid
+        from concurrent.futures import ThreadPoolExecutor
+        from livingd.database import connect
+        from livingd.models import configure_gateway,generate
+        from livingd.budgets import configure,reserve,status,BudgetExceeded
+        scope="test-budget-model-"+uuid.uuid4().hex
+        with connect() as db:
+            configure_gateway(db,scope,
+                              "http://127.0.0.1:"+str(self.proxy.server_port),
+                              "secret-limitation-test")
+            policy=configure(db,scope,model_calls=1,external_calls=0)
+        self.assertEqual(policy["limits"]["model_calls"],1)
+        self.assertEqual(generate(scope,"answer","question","memory"),"via model-alpha")
+        with self.assertRaisesRegex(BudgetExceeded,"limit reached"):
+            generate(scope,"answer","second request","memory")
+        with connect() as db:
+            counters=status(db,scope)
+            self.assertEqual(counters["used"]["model_calls"],1)
+            with self.assertRaisesRegex(BudgetExceeded,"disabled"):
+                reserve(db,scope,"external")
+        concurrent="test-budget-concurrent-"+uuid.uuid4().hex
+        with connect() as db:
+            configure(db,concurrent,model_calls=3,external_calls=2)
+        def attempt(_):
+            try:
+                with connect() as db:reserve(db,concurrent,"model")
+                return True
+            except BudgetExceeded:
+                return False
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results=list(pool.map(attempt,range(20)))
+        self.assertEqual(sum(results),3)
+        with connect() as db:
+            self.assertEqual(status(db,concurrent)["used"]["model_calls"],3)
+
     def test_ciphertext_is_bound_to_scope_and_name(self):
         from livingd.database import connect
         from livingd.models import put_credential,read_credential,ModelGatewayError

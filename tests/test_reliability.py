@@ -469,6 +469,39 @@ class CorrectnessTests(unittest.TestCase):
                 register_capability(db,left_principal,
                      {**spec("upper"),"id":"text.upper"})
 
+    def test_zero_external_call_budget_prevents_tool_execution(self):
+        from livingd.database import connect
+        from livingd.engine import ingest,route_once,deliver_once,node_once
+        from livingd.budgets import configure,status
+        self.drain()
+        scope="budget-external-"+uuid.uuid4().hex
+        principal="budget-actor-"+uuid.uuid4().hex
+        with connect() as db:
+            db.execute("""
+              INSERT INTO control_principals(id,scope_id,grants)
+              VALUES(%s,%s,ARRAY['control.invoke','worker.execute'])
+            """,(principal,scope))
+            configure(db,scope,model_calls=5,external_calls=0)
+        event=ingest("control.action","budget-test",uuid.uuid4().hex,scope,
+                     {"action_id":"living.python","text":"print('never started')"},
+                     principal_id=principal)
+        self.assertTrue(route_once())
+        self.assertTrue(deliver_once())
+        self.assertTrue(node_once())
+        with connect() as db:
+            a=db.execute("SELECT id,state,result FROM activations WHERE event_id=%s",
+                         (event,)).fetchone()
+            nr=db.execute("SELECT count(*) AS n FROM node_runs WHERE activation_id=%s",
+                          (a["id"],)).fetchone()["n"]
+            effects=db.execute("SELECT count(*) AS n FROM execution_effects WHERE activation_id=%s",
+                               (a["id"],)).fetchone()["n"]
+            quota=status(db,scope)
+        self.assertEqual(a["state"],"failed")
+        self.assertIn("disabled",a["result"]["error"])
+        self.assertEqual(nr,0)
+        self.assertEqual(effects,0)
+        self.assertEqual(quota["used"]["external_calls"],0)
+
     def test_revoking_principal_cancels_pending_and_inflight_work(self):
         from unittest.mock import patch
         from livingd.database import connect
