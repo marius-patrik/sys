@@ -98,6 +98,51 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(row["state"],"completed")
         self.assertEqual(row["result"]["view"]["value"],"FENCE")
 
+    def test_capability_cannot_mislabel_mutation_as_read_only(self):
+        from livingd.database import connect
+        from livingd.registry import catalog
+        import urllib.error
+        suffix=uuid.uuid4().hex
+        base="http://127.0.0.1:"+str(self.server.server_port)
+        headers={"Authorization":"Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"],
+                 "Content-Type":"application/json"}
+        def publish(body):
+            req=urllib.request.Request(base+"/v1/control/capabilities",
+                   method="POST",headers=headers,data=json.dumps(body).encode())
+            with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
+        mutation={"id":"test.mutation."+suffix,"adapter":"memory",
+                  "config":{"operation":"remember"},
+                  "inputs":{"value":"text"},"outputs":{"value":"text"},
+                  "effect":"read","grants":[]}
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            publish(mutation)
+        self.assertEqual(failure.exception.code,400)
+        model={"id":"test.model."+suffix,"adapter":"model",
+               "config":{"purpose":"answer"},
+               "inputs":{"question":"text","context":"text"},"outputs":{"value":"text"},
+               "effect":"read","grants":[]}
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            publish(model)
+        self.assertEqual(failure.exception.code,400)
+        wrong_port={"id":"test.ports."+suffix,"adapter":"pure",
+                    "config":{"operation":"upper"},
+                    "inputs":{"value":"text"},"outputs":{"view":"view"},
+                    "effect":"read","grants":[]}
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            publish(wrong_port)
+        self.assertEqual(failure.exception.code,400)
+        safe={**mutation,"effect":"write","grants":["memory.write"]}
+        self.assertEqual(publish(safe)["revision"],1)
+        # A malformed direct SQL revision must not enter executable catalog.
+        with connect() as db:
+            db.execute("""
+               INSERT INTO capability_registry(id,revision,input_ports,output_ports,adapter,adapter_config,effect,required_grants)
+               VALUES(%s,1,'{"value":"text"}','{"value":"text"}',
+                      'memory','{"operation":"remember"}','read',ARRAY[]::text[])
+            """,("test.untrusted."+suffix,))
+            entries=catalog(db)
+        self.assertNotIn("test.untrusted."+suffix,entries)
+
     def test_control_api_registers_scoped_capabilities_and_graphs(self):
         self.drain()
         suffix=uuid.uuid4().hex

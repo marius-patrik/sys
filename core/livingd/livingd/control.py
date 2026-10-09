@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from .logic import validate_graph
-from .registry import ADAPTERS,catalog,authorize
+from .registry import ADAPTERS,catalog,authorize,validate_adapter_contract
 
 IDENT=re.compile(r"^[a-z][a-z0-9._-]{2,127}$")
 PORTS={"text","view"}
@@ -37,6 +37,9 @@ def register_capability(db,principal:dict,data:dict)->dict:
     grants=data.get("grants",[])
     if not isinstance(grants,list) or len(grants)>20 or any(not isinstance(g,str) for g in grants):
         raise ValueError("invalid grants")
+    validate_adapter_contract({"adapter":adapter,"config":config,
+                               "in":inputs,"out":outputs,
+                               "effect":effect,"grants":grants})
     if not set(grants)<=set(principal["grants"]):raise PermissionError("requested capability escalates privileges")
     row=db.execute("SELECT max(revision) version FROM capability_registry WHERE id=%s",(name,)).fetchone()
     expected=(row["version"] or 0)+1
