@@ -75,7 +75,7 @@ def _state(db,task,principal):
     cancelled=any(x["state"]=="cancelled" for x in runs)
     active=bool(pending) or not runs or any(
         x["state"] in ("pending","running","suspended") for x in runs)
-    status="failed" if failed else "cancelled" if cancelled or task["cancelled_at"] else "working" if active else "completed"
+    status="cancelled" if cancelled or task["cancelled_at"] else "failed" if failed else "working" if active else "completed"
     completed=[a["result"] for a in runs if a["state"]=="completed" and a["result"]]
     value=completed[-1] if completed else None
     if value and isinstance(value.get("view"),dict):value=value["view"].get("value",value)
