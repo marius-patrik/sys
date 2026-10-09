@@ -125,6 +125,40 @@ def deliver_once() -> bool:
         return True
 
 
+def _cancel_revoked(db, activation_id)->bool:
+    """Stop a durable unit if its originating principal lost permission.
+
+    Revocation cannot undo a physical effect already in flight; that effect is
+    marked uncertain for explicit reconciliation rather than replayed.
+    """
+    row=db.execute("""
+        SELECT a.id,a.grants,a.scope_id,p.id AS principal_exists,
+               p.enabled,p.grants AS current_grants,p.scope_id AS principal_scope
+        FROM activations a LEFT JOIN control_principals p ON p.id=a.principal_id
+        WHERE a.id=%s AND a.state IN ('pending','running','suspended')
+        FOR UPDATE OF a
+    """,(activation_id,)).fetchone()
+    if row is None:return False
+    if (row["principal_exists"] is not None and row["enabled"]
+            and row["principal_scope"]==row["scope_id"]
+            and set(row["grants"])<=set(row["current_grants"] or [])):
+        return False
+    db.execute("""
+        UPDATE execution_effects SET state='uncertain',updated_at=now()
+        WHERE activation_id=%s AND state='running'
+    """,(activation_id,))
+    db.execute("""
+        UPDATE node_runs SET state='failed',lease_until=NULL,
+               error='execution authorization revoked'
+        WHERE activation_id=%s AND state IN ('leased','retry_wait','awaiting_child')
+    """,(activation_id,))
+    db.execute("""
+        UPDATE activations SET state='cancelled',cancelled_at=now(),updated_at=now()
+        WHERE id=%s AND state IN ('pending','running','suspended')
+    """,(activation_id,))
+    return True
+
+
 def _claim_node():
     """Claim exactly one ready node; no external work is done in the transaction."""
     with connect() as db:
@@ -135,6 +169,8 @@ def _claim_node():
             ORDER BY a.scheduler_checked_at, a.created_at, a.id LIMIT 32 FOR UPDATE OF a SKIP LOCKED
         """).fetchall()
         for a in activations:
+            if _cancel_revoked(db,a["id"]):
+                return {"finalized":True}
             g = a["definition"]
             manifest=a["capability_pins"] or catalog(db,a["scope_id"])
             validate_graph(g,manifest)
@@ -261,11 +297,18 @@ def node_once() -> bool:
                     THEN now()+(%s*interval '1 second') ELSE NULL END
                 WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
                   AND state='leased' AND lease_until>=now()
-                  AND EXISTS(SELECT 1 FROM activations WHERE id=%s AND state='running')
+                  AND EXISTS (
+                    SELECT 1 FROM activations a
+                    JOIN control_principals p ON p.id=a.principal_id
+                    WHERE a.id=%s AND a.state='running' AND p.enabled
+                      AND p.scope_id=a.scope_id AND p.grants @> a.grants
+                  )
                 RETURNING node_id
             """,(state,str(exc)[:1000],state,2**min(task["epoch"],5),
                  task["activation_id"],task["node_id"],task["epoch"],
                  task["activation_id"])).fetchone()
+            if row is None:
+                _cancel_revoked(db,task["activation_id"])
             if row and state=='uncertain':
                 db.execute("UPDATE activations SET state='suspended',updated_at=now() WHERE id=%s AND state='running'",(task["activation_id"],))
                 db.execute("UPDATE execution_effects SET state='uncertain',updated_at=now() WHERE activation_id=%s AND node_id=%s",(task["activation_id"],task["node_id"]))
@@ -282,9 +325,16 @@ def node_once() -> bool:
             UPDATE node_runs SET state='completed', result=%s::jsonb, lease_until=NULL
             WHERE activation_id=%s AND node_id=%s AND lease_epoch=%s
               AND state='leased' AND lease_until >= now()
-               AND EXISTS(SELECT 1 FROM activations WHERE id=%s AND state='running')
+               AND EXISTS (
+                    SELECT 1 FROM activations a
+                    JOIN control_principals p ON p.id=a.principal_id
+                    WHERE a.id=%s AND a.state='running' AND p.enabled
+                      AND p.scope_id=a.scope_id AND p.grants @> a.grants
+                  )
             RETURNING activation_id
         """, (json.dumps(result), task["activation_id"], task["node_id"],task["epoch"],task["activation_id"])).fetchone()
+        if row is None and _cancel_revoked(db,task["activation_id"]):
+            return True
         if row:
             if task["manifest"]["effect"]=="external":
                 db.execute("""

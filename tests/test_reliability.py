@@ -469,6 +469,67 @@ class CorrectnessTests(unittest.TestCase):
                 register_capability(db,left_principal,
                      {**spec("upper"),"id":"text.upper"})
 
+    def test_revoking_principal_cancels_pending_and_inflight_work(self):
+        from unittest.mock import patch
+        from livingd.database import connect
+        from livingd.engine import ingest,route_once,deliver_once,node_once
+        self.drain()
+        owner="revoked-pending-"+uuid.uuid4().hex
+        with connect() as db:
+            db.execute("""
+              INSERT INTO control_principals(id,scope_id,grants)
+              VALUES(%s,'dev',ARRAY['control.invoke'])
+            """,(owner,))
+        event=ingest("control.action","revocation",uuid.uuid4().hex,"dev",
+                     {"action_id":"living.upper","text":"must not run"},principal_id=owner)
+        self.assertTrue(route_once())
+        self.assertTrue(deliver_once())
+        with connect() as db:
+            db.execute("UPDATE control_principals SET enabled=false WHERE id=%s",(owner,))
+        self.assertTrue(node_once())
+        with connect() as db:
+            a=db.execute("SELECT id,state FROM activations WHERE event_id=%s",(event,)).fetchone()
+            count=db.execute("SELECT count(*) AS n FROM node_runs WHERE activation_id=%s",
+                             (a["id"],)).fetchone()
+        self.assertEqual(a["state"],"cancelled")
+        self.assertEqual(count["n"],0)
+
+        for action,grants in [("living.upper",["control.invoke"]),
+                              ("living.python",["control.invoke","worker.execute"])]:
+            principal="revoked-inflight-"+uuid.uuid4().hex
+            with connect() as db:
+                db.execute("""
+                  INSERT INTO control_principals(id,scope_id,grants)
+                  VALUES(%s,'dev',%s)
+                """,(principal,grants))
+            invocation=ingest("control.action","revocation",uuid.uuid4().hex,"dev",
+                              {"action_id":action,"text":"print('hello')"},
+                              principal_id=principal)
+            self.assertTrue(route_once())
+            self.assertTrue(deliver_once())
+            def revoke_during_execution(*args,**kwargs):
+                with connect() as db:
+                    db.execute("UPDATE control_principals SET enabled=false WHERE id=%s",
+                               (principal,))
+                return {"value":"not permitted after revocation"}
+            with patch("livingd.runtime.execute_registered",
+                       side_effect=revoke_during_execution):
+                self.assertTrue(node_once())
+            with connect() as db:
+                a=db.execute("SELECT id,state,result FROM activations WHERE event_id=%s",
+                             (invocation,)).fetchone()
+                nr=db.execute("SELECT state FROM node_runs WHERE activation_id=%s",
+                              (a["id"],)).fetchone()
+                effects=db.execute("SELECT state FROM execution_effects WHERE activation_id=%s",
+                                   (a["id"],)).fetchall()
+            self.assertEqual(a["state"],"cancelled",a)
+            self.assertIsNone(a["result"])
+            self.assertEqual(nr["state"],"failed")
+            if action=="living.python":
+                self.assertEqual([x["state"] for x in effects],["uncertain"])
+            else:
+                self.assertEqual(effects,[])
+
     def test_private_nested_graph_cannot_run_in_another_scope(self):
         from livingd.database import connect
         from livingd.engine import ingest, route_once, deliver_once, node_once

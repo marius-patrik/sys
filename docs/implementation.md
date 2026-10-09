@@ -56,3 +56,7 @@ Production identity/key rotation, tenant-aware resource/cost budgets and audit; 
 ## Scoped capabilities
 
 Capabilities are resolved from PostgreSQL for the caller's workspace. The built-in interpreter declarations are global; new registered aliases are private to their creating workspace, including during routing, graph execution, composition, and MCP discovery. A workspace cannot replace a built-in alias. Graphs published in one workspace cannot be invoked by nested graph references from another workspace. Historical custom aliases created before scope attribution cannot be safely assigned to an owner; migration 0015 deactivates them and requires authorized republishing. Existing completed activation snapshots remain intact.
+
+## Revocation semantics
+
+The executor rechecks the database principal before each node claim and at fenced completion, comparing enabled status, scope and grants with the activation's original authorization snapshot. Disabling a principal or removing a captured grant cancels outstanding work. An external effect already dispatched cannot be undone and is recorded as **uncertain** for reconciliation; its result is never silently committed. Token revocation blocks future API access, while an active unit is stopped by principal disablement or grant revocation. The CI fault test simulates revocation between node execution and result commit.
