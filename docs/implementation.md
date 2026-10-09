@@ -8,7 +8,7 @@ Source and CI, not the conceptual design, determine what is working. This is a d
 | Graph executor | DB capability registry and immutable snapshots; typed graphs, grant checks, lease renewal/fencing, bounded retry, cancellation | Real PostgreSQL, multiple executor threads, fresh subprocess, fault injection |
 | Logical workers | Nested `graph.call` activations, durable child output and parent continuation | PostgreSQL nested test; bounded depth, no independent agent roles |
 | External effects | OCI Python broker with no-network sandbox; effect ledger, uncertainty and manual reconciliation | Real Docker isolation; no automatic exactly-once effect guarantee |
-| Models | LiteLLM `/v1/models` discovery and text chat; encrypted DB key and model policy | Mock-compatible LiteLLM; **no verified live provider** |
+| Models | LiteLLM `/v1/models` discovery and text chat; encrypted DB key and model policy | Real LiteLLM 1.95.0 proxy + deterministic fake upstream; **no live external provider** |
 | DSH | Single guarded DSH tool bridge; profile patch disables stock agent loop | Mocked `ctx.tools.execute`; **no verified upstream DSH installation** |
 | Memory | DB text search, evidence, typed entities/relations/conflicts, optional model candidate extraction + approval | PostgreSQL+mock inference; semantic embeddings, advanced consolidation absent |
 | Control | Bearer principals/grants; scoped action catalog; typed capability & graph publication | API/integration tests; one-text-action constraint and local-only auth |
@@ -45,8 +45,9 @@ A merge requires all checks green on **the same PR SHA**, then separately on the
 1. Pure contracts, authenticated HTTP smoke, PostgreSQL migrations and integration tests (event/delivery, scoped access, dynamic graph registration, causally aggregated outputs, memory, goal wakeup, nested graph, long-execution leases, stale worker, restart, concurrency, MCP task/cancel and effect reconciliation).
 2. Real Docker/OCI sandbox smoke test.
 3. Nix package and OCI image boot smoke test.
+4. Real LiteLLM proxy launch, encrypted PostgreSQL gateway credential, advertised model selection and graph-backed completion via a deterministic OpenAI-compatible upstream.
 
-The LiteLLM and DSH models/tools are mocked for repeatability. Passing these jobs does **not** establish a running real LiteLLM provider, a deployed DSH host, native interfaces, general semantic learning or production security.
+The LiteLLM **proxy itself is genuine** and its upstream response is deterministic; the DSH tool host remains mocked. Passing these jobs does **not** establish a connected third-party model provider, deployed upstream DSH host, native interfaces, general semantic learning or production security. The proxy CI lane pins LiteLLM 1.95.0 to FastAPI 0.140.0 because newer FastAPI removed an API needed by that LiteLLM release.
 
 ## Remaining engineering and research
 

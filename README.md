@@ -46,4 +46,4 @@ A local bearer token maps to database-held principal, scope and grants. Keep the
 
 Observations can produce evidence-backed memory candidates; optional LiteLLM extraction is enabled through a database-owned attention policy, and claim promotion requires approval. Contradictory structured claims are preserved. Real semantic consolidation, autonomous planning, mobile/native renderers and production security remain future work.
 
-CI verifies PostgreSQL execution, concurrency/restart/fault tests, mocked LiteLLM/DSH boundaries, physical OCI sandbox behavior and Nix container boot. **Mock-backed green CI is not verification of an entire deployed intelligent system.** See [implementation.md](docs/implementation.md) for exact coverage.
+CI verifies PostgreSQL execution, concurrency/restart/fault tests, an actual LiteLLM 1.95.0 proxy connected to a deterministic local provider, mocked DSH tool contracts, physical OCI sandbox behavior and Nix container boot. **The proxy test verifies LiteLLM routing, not a live third-party model account or an entirely deployed intelligent system.** See [implementation.md](docs/implementation.md) for exact coverage.
