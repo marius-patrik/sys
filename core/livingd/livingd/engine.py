@@ -12,7 +12,7 @@ from .logic import validate_graph, due_nodes, node_inputs, selected_outputs
 from .runtime import execute
 from .memory import record as record_memory
 from .composer import install as install_proposal
-from .registry import catalog,authorize
+from .registry import catalog,authorize,visible_graph
 
 log = logging.getLogger(__name__)
 
@@ -297,8 +297,7 @@ def node_once() -> bool:
                     SELECT principal_id,grants,root_event_id,depth,max_depth
                     FROM activations WHERE id=%s AND state='running' FOR UPDATE
                 """,(task["activation_id"],)).fetchone()
-                target=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",
-                                  (spec["revision"],)).fetchone()
+                target=visible_graph(db,spec["revision"],task["scope_id"])
                 if not parent or not target or parent["depth"]>=parent["max_depth"]:
                     raise ValueError("invalid nested graph activation")
                 child_manifest=catalog(db)

@@ -137,12 +137,12 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
         return {"view":{"type":"text","value":"Goal recorded: "+title},
                 "_goal_create":{"title":title}}
     if adapter=="graph":
-        from .registry import catalog, authorize
+        from .registry import catalog, authorize, visible_graph
         from .logic import validate_graph
         with connect() as db:
             parent=db.execute("SELECT depth,max_depth,grants FROM activations WHERE id=%s AND scope_id=%s",(activation_id,scope)).fetchone()
-            target=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",(args["revision"],)).fetchone()
-            if not parent or not target:raise ValueError("graph activation not found")
+            target=visible_graph(db,args["revision"],scope)
+            if not parent or not target:raise ValueError("nested graph unavailable in this scope")
             if parent["depth"]>=parent["max_depth"]:raise ValueError("nested graph depth exceeded")
             manifest=catalog(db)
             validate_graph(target["definition"],manifest)
