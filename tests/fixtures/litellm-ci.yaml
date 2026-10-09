@@ -1,0 +1,10 @@
+# CI-only. The upstream provider is deterministic, but the proxy under
+# test is the unmodified LiteLLM distribution, not a Python mock.
+model_list:
+  - model_name: sys-ci-model
+    litellm_params:
+      model: openai/sys-ci-upstream
+      api_base: http://127.0.0.1:8765/v1
+      api_key: ci-upstream-key
+general_settings:
+  master_key: sk-sys-ci-real-litellm-proxy

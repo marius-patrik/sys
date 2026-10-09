@@ -1,0 +1,40 @@
+name: LiteLLM proxy integration
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-litellm:
+    name: Real LiteLLM package and PostgreSQL graph
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: living
+          POSTGRES_USER: living
+          POSTGRES_PASSWORD: living_test_password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U living -d living"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    env:
+      LIVING_TEST_DATABASE_URL: postgresql://living:living_test_password@127.0.0.1:5432/living
+      LIVING_BOOTSTRAP_TOKEN: test-control-token-0123456789-abcdef
+      LIVING_REAL_LITELLM_URL: http://127.0.0.1:4000
+      LIVING_REAL_LITELLM_TOKEN: sk-sys-ci-real-litellm-proxy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install actual LiteLLM proxy distribution
+        run: python -m pip install -r requirements-dev.txt 'litellm[proxy]'
+      - name: Exercise proxy and durable graph node
+        run: bash scripts/ci-litellm.sh
+      - name: Logs on failure
+        if: failure()
+        run: |
+          cat /tmp/living-upstream.log || true
+          cat /tmp/living-proxy.log || true
