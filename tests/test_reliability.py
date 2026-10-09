@@ -264,6 +264,20 @@ class CorrectnessTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:
             request("tools/list",{},origin="https://invalid.example")
         self.assertEqual(exc.exception.code,403)
+        discovery=request("server/discover",{})["result"]
+        self.assertEqual(discovery["resultType"],"complete")
+        self.assertIn("2026-07-28",discovery["supportedVersions"])
+        self.assertIn("io.modelcontextprotocol/tasks",discovery["capabilities"]["extensions"])
+        self.assertEqual(discovery["cacheScope"],"private")
+        for method in ("tools/list","resources/list","prompts/list"):
+            response=request(method,{})["result"]
+            self.assertEqual(response["resultType"],"complete")
+            self.assertEqual(response["ttlMs"],0)
+            self.assertEqual(response["cacheScope"],"private")
+            self.assertIn("io.modelcontextprotocol/serverInfo",response["_meta"])
+        read=request("resources/read",{"uri":"living://view/interface.root"})["result"]
+        self.assertEqual(read["resultType"],"complete")
+        self.assertEqual(read["cacheScope"],"private")
         returned=request("tools/call",{"name":"living.upper","arguments":{"text":"modern mcp"}},
                          task_name="living.upper")
         self.assertEqual(returned["result"]["resultType"],"task")
@@ -272,6 +286,8 @@ class CorrectnessTests(unittest.TestCase):
         state=request("tasks/get",{"taskId":task_id},task_name=task_id)["result"]
         self.assertEqual(state["status"],"completed")
         self.assertEqual(state["result"]["content"][0]["text"],"MODERN MCP")
+        update=request("tasks/update",{"taskId":task_id},task_name=task_id)
+        self.assertEqual(update["error"]["code"],-32602)
         pending=request("tools/call",{"name":"living.echo","arguments":{"text":"cancel before delivery"}},
                         task_name="living.echo")["result"]["taskId"]
         cancelled=request("tasks/cancel",{"taskId":pending},task_name=pending)["result"]

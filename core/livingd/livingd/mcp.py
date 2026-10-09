@@ -94,8 +94,9 @@ def response(rid,result=None,error=None,modern=False):
     if error is not None:data["error"]=error
     else:
         if modern and isinstance(result,dict):
-            result={**result,"_meta":{"io.modelcontextprotocol/serverInfo":{
-                    "name":"living-sys","version":"0.30-dev"}}}
+            result={**result,"resultType":result.get("resultType","complete"),
+                    "_meta":{"io.modelcontextprotocol/serverInfo":{
+                    "name":"living-sys","version":"dev"}}}
         data["result"]=result
     return data
 
@@ -110,6 +111,15 @@ def handle(request,principal):
     modern=meta.get("io.modelcontextprotocol/protocolVersion")==PROTOCOL
     if method=="notifications/initialized" or (rid is None and str(method).startswith("notifications/")):
         return None
+    if method=="server/discover":
+        return response(rid,{"supportedVersions":[PROTOCOL],
+            "capabilities":{"tools":{},"resources":{},"prompts":{},
+                "extensions":{"io.modelcontextprotocol/tasks":{}}},
+            "ttlMs":0,"cacheScope":"private"},modern=True)
+    if modern and not isinstance(meta.get("io.modelcontextprotocol/clientCapabilities"),dict):
+        return response(rid,error={"code":-32602,"message":"Missing MCP client capabilities"})
+    if method=="initialize" and modern:
+        return response(rid,error={"code":-32601,"message":"Modern MCP has no initialize handshake"})
     if method=="initialize":
         return response(rid,{"protocolVersion":LEGACY,
               "serverInfo":{"name":"living-sys","version":"0.30-dev"},
@@ -122,7 +132,7 @@ def handle(request,principal):
                 "properties":{a["input_name"]:{"type":"string"}},
                 "required":[a["input_name"]],"additionalProperties":False}}
               for a in actions(principal)]
-        return response(rid,{"tools":items},modern=modern)
+        return response(rid,{"tools":items,**({"ttlMs":0,"cacheScope":"private"} if modern else {})},modern=modern)
     if method=="tools/call":
         name=params.get("name")
         action=next((a for a in actions(principal) if a["id"]==name),None)
@@ -156,6 +166,12 @@ def handle(request,principal):
             if not task:return response(rid,error={"code":-32602,"message":"Task not found"})
             status=_state(db,task,principal)
         return response(rid,status,modern=modern)
+    if method=="tasks/update":
+        with connect() as db:
+            task=_task(db,params.get("taskId"),principal)
+        if task is None:
+            return response(rid,error={"code":-32602,"message":"Task not found"})
+        return response(rid,error={"code":-32602,"message":"Task has no pending input requests"})
     if method=="tasks/cancel":
         with connect() as db:
             task=_task(db,params.get("taskId"),principal)
@@ -175,7 +191,8 @@ def handle(request,principal):
         with connect() as db:
             views=db.execute("SELECT id FROM control_views ORDER BY id").fetchall()
         return response(rid,{"resources":[{"uri":"living://view/"+v["id"],
-            "name":v["id"],"mimeType":"application/json"} for v in views]},modern=modern)
+            "name":v["id"],"mimeType":"application/json"} for v in views],
+            **({"ttlMs":0,"cacheScope":"private"} if modern else {})},modern=modern)
     if method=="resources/read":
         uri=params.get("uri","")
         if not isinstance(uri,str):raise ValueError("invalid resource URI")
@@ -195,6 +212,8 @@ def handle(request,principal):
             else:data=None
         if data is None:return response(rid,error={"code":-32602,"message":"Resource not found"})
         return response(rid,{"contents":[{"uri":uri,"mimeType":"application/json",
-            "text":json.dumps(data,default=str)}]},modern=modern)
-    if method=="prompts/list":return response(rid,{"prompts":[]},modern=modern)
+            "text":json.dumps(data,default=str)}],
+            **({"ttlMs":0,"cacheScope":"private"} if modern else {})},modern=modern)
+    if method=="prompts/list":
+        return response(rid,{"prompts":[],**({"ttlMs":0,"cacheScope":"private"} if modern else {})},modern=modern)
     return response(rid,error={"code":-32601,"message":"Method not found"})

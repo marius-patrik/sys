@@ -222,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                     method=body.get('method')
                     if self.headers.get('Mcp-Method')!=method:
                         return self.respond(400,{'error':'Mcp-Method mismatch'})
-                    if method in ('tools/call','tasks/get','tasks/cancel'):
+                    if method in ('tools/call','tasks/get','tasks/update','tasks/cancel'):
                         item=(body.get('params') or {})
                         expected=item.get('name') if method=='tools/call' else item.get('taskId')
                         if self.headers.get('Mcp-Name')!=expected:
