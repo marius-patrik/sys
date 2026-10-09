@@ -19,9 +19,13 @@ class FullSystemIntegration(unittest.TestCase):
         os.environ["LIVING_DATABASE_URL"]=os.environ["LIVING_TEST_DATABASE_URL"]
         os.environ.pop("LIVING_DATABASE_URL_FILE",None)
         os.environ["LIVING_DEV_MODE"]="1"
+        os.environ["LIVING_BOOTSTRAP_TOKEN"]="test-control-token-0123456789-abcdef"
         os.environ["LIVING_SEAL_KEY"]=base64.b64encode(bytes(range(32))).decode()
         from livingd.database import migrate, seed
         migrate();seed()
+        from livingd.auth import authenticate
+        cls.principal=authenticate("Bearer "+os.environ["LIVING_BOOTSTRAP_TOKEN"])
+        assert cls.principal is not None
 
         class LiteLLMMock(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -40,9 +44,18 @@ class FullSystemIntegration(unittest.TestCase):
                 assert self.path=="/v1/chat/completions",self.path
                 assert self.headers.get("Authorization")=="Bearer test-litellm-key"
                 assert data["model"]=="ci-chat-model"
-                memory=data["messages"][-1]["content"].split("Relevant context:\n",1)[-1]
-                self.respond({"choices":[{"message":{"role":"assistant",
-                    "content":"Test model answer. Memory: "+memory}}]})
+                full_prompt=data["messages"][-1]["content"]
+                memory=full_prompt.split("Relevant context:\n",1)[-1]
+                if "Extract up to " in full_prompt:
+                    observation=full_prompt.split("Evidence: ",1)[-1].split("\n\nRelevant context:",1)[0]
+                    parts=observation.split(" is ",1)
+                    subject=parts[0].strip()
+                    object_name=parts[1].strip() if len(parts)>1 else "unknown"
+                    content=json.dumps({"claims":[{"statement":observation,"subject":subject,
+                              "predicate":"is","object":object_name}]})
+                else:
+                    content="Test model answer. Memory: "+memory
+                self.respond({"choices":[{"message":{"role":"assistant","content":content}}]})
         cls.model=ThreadingHTTPServer(("127.0.0.1",0),LiteLLMMock)
         cls.model_thread=threading.Thread(target=cls.model.serve_forever,daemon=True)
         cls.model_thread.start()
@@ -63,6 +76,7 @@ class FullSystemIntegration(unittest.TestCase):
         cls.http.shutdown();cls.http.server_close()
         cls.model.shutdown();cls.model.server_close()
         os.environ.pop("LIVING_SEAL_KEY",None)
+        os.environ.pop("LIVING_BOOTSTRAP_TOKEN",None)
 
     def pump(self,steps=250):
         from livingd.engine import tick
@@ -70,13 +84,15 @@ class FullSystemIntegration(unittest.TestCase):
             if not tick():break
 
     def read(self,path):
-        with urllib.request.urlopen("http://127.0.0.1:"+str(self.http.server_port)+path,timeout=5) as response:
+        req=urllib.request.Request("http://127.0.0.1:"+str(self.http.server_port)+path,
+            headers={"Authorization":"Bearer test-control-token-0123456789-abcdef"})
+        with urllib.request.urlopen(req,timeout=5) as response:
             return response.headers.get("content-type",""),response.read()
 
     def post(self,path,data):
         body=json.dumps(data).encode()
         req=urllib.request.Request("http://127.0.0.1:"+str(self.http.server_port)+path,
-          data=body,headers={"Content-Type":"application/json"},method="POST")
+          data=body,headers={"Content-Type":"application/json","Authorization":"Bearer test-control-token-0123456789-abcdef"},method="POST")
         with urllib.request.urlopen(req,timeout=5) as response:
             return json.load(response)
 
@@ -141,7 +157,8 @@ class FullSystemIntegration(unittest.TestCase):
     def test_graph_composition_and_mcp(self):
         from livingd.engine import ingest
         from livingd.database import connect
-        from livingd.mcp import handle
+        from livingd.mcp import handle as raw_handle
+        handle=lambda data:raw_handle(data,self.principal)
         listed=handle({"jsonrpc":"2.0","id":1,"method":"tools/list"})["result"]["tools"]
         self.assertIn("living.remember",[t["name"] for t in listed])
         eid=handle({"jsonrpc":"2.0","id":2,"method":"tools/call",
@@ -180,6 +197,41 @@ class FullSystemIntegration(unittest.TestCase):
         with connect() as db:
             stored=db.execute("SELECT ciphertext,nonce FROM integration_credentials WHERE scope_id='dev' AND name='litellm.api_key'").fetchone()
         self.assertNotIn(b"test-litellm-key",bytes(stored["ciphertext"]))
+
+    def test_model_extraction_and_explicit_conflict_preservation(self):
+        from livingd.engine import ingest
+        from livingd.database import connect
+        unique="subject"+uuid.uuid4().hex[:12]
+        self.post("/v1/memory/attention/policy",
+                  {"event_kind":"tool.observed","model_enabled":True,"max_candidates":2})
+        try:
+            claims=[]
+            for color in ("red","blue"):
+                sentence=unique+" is "+color
+                event=ingest("tool.observed","memory-test",str(uuid.uuid4()),"dev",{"text":sentence})
+                self.pump()
+                with connect() as db:
+                    candidate=db.execute("""
+                      SELECT id,assertion,content FROM memory_candidates
+                      WHERE source_event_id=%s AND state='pending'
+                    """,(event,)).fetchone()
+                self.assertIsNotNone(candidate)
+                self.assertEqual(candidate["assertion"]["subject"],unique)
+                self.assertEqual(candidate["assertion"]["object"],color)
+                self.post("/v1/control/actions/living.approve-memory",{"text":str(candidate["id"])})
+                self.pump()
+                claims.append(candidate["id"])
+            with connect() as db:
+                contradictions=db.execute("""
+                  SELECT a.content AS left_claim,b.content AS right_claim
+                  FROM memory_conflicts c JOIN memory_claims a ON a.id=c.claim_a
+                  JOIN memory_claims b ON b.id=c.claim_b
+                  WHERE c.scope_id='dev' AND a.content LIKE %s
+                """,(unique+"%",)).fetchall()
+            self.assertEqual(len(contradictions),1)
+        finally:
+            self.post("/v1/memory/attention/policy",
+                      {"event_kind":"tool.observed","model_enabled":False})
 
     def test_dynamic_web_and_mcp_http(self):
         content,body=self.read("/")

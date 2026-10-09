@@ -1,5 +1,5 @@
 {
-  description = "Living Intelligence: deterministic PostgreSQL graph-engine vertical slice";
+  description = "Living Intelligence: database-defined persistent graph executor";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   outputs = { self, nixpkgs }:
     let
@@ -8,7 +8,7 @@
       py = pkgs.python3.withPackages (ps: [ ps.psycopg ps.cryptography ]);
       livingd = pkgs.stdenvNoCC.mkDerivation {
         pname = "livingd";
-        version = "0.28.0";
+        version = "0.30.0";
         src = self;
         dontBuild = true;
         installPhase = ''
@@ -37,7 +37,7 @@
         default = livingd;
         coreImage = pkgs.dockerTools.buildLayeredImage {
           name = "living-core";
-          tag = "v0.28-dev";
+          tag = "dev";
           contents = [ runtime ];
           config = {
             User = "10001:10001";

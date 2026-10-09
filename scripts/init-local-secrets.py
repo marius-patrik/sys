@@ -18,4 +18,8 @@ seal=root/'living_seal_key'
 if not seal.exists():
  seal.write_text(b64encode(token_bytes(32)).decode()+'\n')
  os.chmod(seal,0o600)
+ctl=root/'living_control_token'
+if not ctl.exists():
+ ctl.write_text(token_urlsafe(40)+'\n')
+ os.chmod(ctl,0o600)
 print('Generated local bootstrap secrets under .private/')

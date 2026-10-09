@@ -6,10 +6,14 @@ import time
 import uuid
 import urllib.request
 BASE=os.getenv("LIVING_URL","http://127.0.0.1:8080").rstrip("/")
+from pathlib import Path
+TOKEN=os.getenv("LIVING_BOOTSTRAP_TOKEN","")
+if not TOKEN and Path(".private/living_control_token").is_file():
+    TOKEN=Path(".private/living_control_token").read_text().strip()
 def call(method,path,payload=None):
     body=None if payload is None else json.dumps(payload).encode()
     req=urllib.request.Request(BASE+path,data=body,method=method,
-      headers={"Content-Type":"application/json","Idempotency-Key":uuid.uuid4().hex})
+      headers={"Content-Type":"application/json","Idempotency-Key":uuid.uuid4().hex,**({"Authorization":"Bearer "+TOKEN} if TOKEN else {})})
     with urllib.request.urlopen(req,timeout=8) as result:
         if path=="/":return result.read().decode()
         return json.load(result)

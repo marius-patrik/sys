@@ -8,9 +8,16 @@ import urllib.request
 
 BASE=os.getenv('LIVING_URL','http://127.0.0.1:8080').rstrip('/')
 
+def token():
+    value=os.getenv("LIVING_BOOTSTRAP_TOKEN")
+    if value:return value
+    from pathlib import Path
+    file=Path(".private/living_control_token")
+    return file.read_text().strip() if file.is_file() else ""
+
 def api(method, path, data=None):
     req=urllib.request.Request(BASE+path, data=json.dumps(data).encode() if data is not None else None,
-        headers={'Content-Type':'application/json'},method=method)
+        headers={'Content-Type':'application/json','Authorization':'Bearer '+token()},method=method)
     with urllib.request.urlopen(req,timeout=10) as res:
         return json.load(res)
 
@@ -36,7 +43,7 @@ def main():
     elif args.command=='event': result=api('GET','/v1/events/'+args.id)
     elif args.command=='handle':result=api('GET','/v1/control/handles/'+args.id)
     else:
-        with urllib.request.urlopen(BASE+'/v1/control/stream',timeout=None) as response:
+        with urllib.request.urlopen(urllib.request.Request(BASE+'/v1/control/stream',headers={'Authorization':'Bearer '+token()}),timeout=None) as response:
             for line in response:
                 print(line.decode().rstrip(),flush=True)
         return

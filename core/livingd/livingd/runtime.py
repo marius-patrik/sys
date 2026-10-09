@@ -28,13 +28,35 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
             event=db.execute("SELECT kind FROM events WHERE id=%s AND scope_id=%s",(cause,scope)).fetchone()
             if not event:raise ValueError("invalid attention source")
             kind=event["kind"]
-            policy=db.execute("SELECT id,revision,min_length FROM attention_policies WHERE event_kind=%s AND enabled",(kind,)).fetchone()
+            policy=db.execute("SELECT id,revision,min_length,model_enabled,max_candidates FROM attention_policies WHERE event_kind=%s AND enabled",(kind,)).fetchone()
             if not policy:raise ValueError("no attention policy")
             existing=db.execute("SELECT id FROM memory_claims WHERE scope_id=%s AND normalized_key=%s",(scope,normalize(value))).fetchone()
         choice="ignore" if len(value)<policy["min_length"] or existing else "candidate"
         reason="short-or-known" if choice=="ignore" else "new-observation"
+        candidates=[{"content":value,"assertion":{}}] if choice=="candidate" else []
+        if candidates and policy["model_enabled"]:
+            try:
+                request=("Extract up to "+str(policy["max_candidates"])+
+                    " atomic factual claims as JSON with a claims list. Each claim has "
+                    "statement, subject, predicate, object. Do not invent facts; "
+                    "only extract explicitly stated observations. Evidence: "+value)
+                interpreted=model(request,"The output MUST be a JSON object.",scope,"memory")
+                parsed=json.loads(interpreted)
+                claims=parsed.get("claims",[])
+                if isinstance(claims,list):
+                    validated=[]
+                    for item in claims[:policy["max_candidates"]]:
+                        if not isinstance(item,dict):continue
+                        statement=item.get("statement")
+                        if not isinstance(statement,str) or not (1<=len(statement)<=600):continue
+                        assertion={k:item[k] for k in ("subject","predicate","object")
+                                   if isinstance(item.get(k),str) and len(item[k])<=180}
+                        validated.append({"content":statement,"assertion":assertion})
+                    if validated:candidates=validated;reason="model-extracted"
+            except (ValueError,TypeError,RuntimeError,OSError):
+                reason="extraction-unavailable-original-observation-preserved"
         return {"view":{"type":"text","value":"Memory attention: "+choice},
-                "_attention":{"choice":choice,"reason":reason,"content":value,
+                "_attention":{"choice":choice,"reason":reason,"candidates":candidates,
                               "policy_id":policy["id"],"policy_revision":policy["revision"]}}
     if capability=="memory.approve":
         import uuid
@@ -76,3 +98,81 @@ def execute(capability:str,args:dict,scope:str,cause:int|None=None)->dict:
     if capability=="model.answer":
         return {"value":model(args["question"],args["context"],scope,"answer")}
     return execute_pure(capability,args)
+
+
+def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifest:dict,activation_id=None,node_id=None)->dict:
+    """Interpret a versioned DB capability. New instances require no Python dispatch edit."""
+    import json
+    from .models import read_credential
+    from .registry import ADAPTERS
+    adapter=manifest["adapter"]
+    config=manifest["config"]
+    if adapter not in ADAPTERS:raise RuntimeError("unsupported capability adapter")
+    if set(args)!=set(manifest["in"]):raise ValueError("invalid capability inputs")
+    if adapter=="pure":
+        op=config.get("operation")
+        if op=="echo":return {"value":args["value"]}
+        if op=="upper":return {"value":args["value"].upper()}
+        if op=="prefix":return {"value":args["prefix"]+args["value"]}
+        if op=="view":return {"view":{"type":"text","value":args["value"]}}
+        raise ValueError("unknown pure adapter operation")
+    if adapter=="memory":
+        op=config.get("operation")
+        canonical={"search":"memory.search","remember":"memory.remember",
+                   "attend":"memory.attend","approve":"memory.approve"}.get(op)
+        if not canonical:raise ValueError("unknown memory operation")
+        return execute(canonical,args,scope,cause)
+    if adapter=="model":
+        return {"value":model(args["question"],args["context"],scope,config.get("purpose","answer"))}
+    if adapter=="composer":
+        return execute("graph.compose",args,scope,cause)
+    if adapter=="control":
+        return execute("input.dispatch",args,scope,cause)
+    if adapter=="oci":
+        if config.get("runtime")!="python":raise ValueError("unsupported OCI runtime")
+        return execute("program.python",args,scope,cause)
+    if adapter=="goal":
+        title=args["title"].strip()
+        if not 1<=len(title)<=200:raise ValueError("goal must be 1..200 characters")
+        return {"view":{"type":"text","value":"Goal recorded: "+title},
+                "_goal_create":{"title":title}}
+    if adapter=="graph":
+        from .registry import catalog, authorize
+        from .logic import validate_graph
+        with connect() as db:
+            parent=db.execute("SELECT depth,max_depth,grants FROM activations WHERE id=%s AND scope_id=%s",(activation_id,scope)).fetchone()
+            target=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",(args["revision"],)).fetchone()
+            if not parent or not target:raise ValueError("graph activation not found")
+            if parent["depth"]>=parent["max_depth"]:raise ValueError("nested graph depth exceeded")
+            manifest=catalog(db)
+            validate_graph(target["definition"],manifest)
+            if target["definition"].get("inputs")!={"text":"text"}:raise ValueError("child needs a text input")
+            for node in target["definition"]["nodes"]:
+                authorize(scope,manifest[node["capability"]],set(parent["grants"]))
+        return {"_child_activation":{"revision":args["revision"],"text":args["text"]}}
+    if adapter=="dsh":
+        import urllib.parse
+        with connect() as db:
+            record=db.execute("""
+                SELECT base_url,credential_name FROM integration_endpoints
+                WHERE scope_id=%s AND service='dsh'
+            """,(scope,)).fetchone()
+            if not record:raise RuntimeError("DSH tool bridge not configured in DB")
+            secret=read_credential(db,scope,record["credential_name"])
+        if not secret:raise RuntimeError("DSH bridge credential not in DB")
+        url=record["base_url"]
+        if not (url.startswith("https://") or url.startswith("http://127.0.0.1:")
+                or url.startswith("http://localhost:") or url.startswith("http://dsh:")):
+            raise ValueError("unsafe DSH tool bridge URL")
+        arguments=json.loads(args["arguments"])
+        if not isinstance(arguments,dict):raise ValueError("DSH tool arguments must be an object")
+        req=urllib.request.Request(url.rstrip("/")+"/v1/nodes/tool",
+          data=json.dumps({"name":args["tool"],"arguments":arguments,
+              "call_id":str(activation_id)+":"+str(node_id)}).encode(),
+          headers={"Content-Type":"application/json","Authorization":"Bearer "+secret},
+          method="POST")
+        with urllib.request.urlopen(req,timeout=45) as response:
+            item=json.load(response)
+        if "outcome" not in item:raise ValueError("invalid DSH tool outcome")
+        return {"value":json.dumps(item["outcome"],default=str)[:12000]}
+    raise RuntimeError("capability adapter unavailable")

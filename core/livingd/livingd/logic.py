@@ -4,27 +4,17 @@ from dataclasses import dataclass
 from typing import Any
 
 
-CAPABILITIES = {
-    "text.echo": {"in": {"value": "text"}, "out": {"value": "text"}},
-    "text.upper": {"in": {"value": "text"}, "out": {"value": "text"}},
-    "text.prefix": {"in": {"value": "text", "prefix": "text"}, "out": {"value": "text"}},
-    "view.text": {"in": {"value": "text"}, "out": {"view": "view"}},
-    "memory.search": {"in": {"query": "text"}, "out": {"value": "text"}},
-    "memory.remember": {"in": {"value": "text"}, "out": {"value": "text"}},
-    "model.answer": {"in": {"question": "text", "context": "text"}, "out": {"value": "text"}},
-    "input.dispatch": {"in": {"value": "text"}, "out": {"view": "view"}},
-    "graph.compose": {"in": {"value": "text"}, "out": {"value": "text"}},
-    "program.python": {"in": {"code": "text"}, "out": {"value": "text"}},
-    "memory.attend": {"in": {"value": "text"}, "out": {"view": "view"}},
-    "memory.approve": {"in": {"value": "text"}, "out": {"view": "view"}},
-}
+from .registry import seeds
 
+def _manifest(override=None):
+    return override if override is not None else seeds()
 
 class GraphValidationError(ValueError):
     pass
 
 
-def validate_graph(graph: dict[str, Any]) -> list[str]:
+def validate_graph(graph: dict[str, Any], manifest:dict|None=None) -> list[str]:
+    capabilities=_manifest(manifest)
     """Validate a closed, typed, acyclic bootstrap graph; return topo order."""
     if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
         raise GraphValidationError("nodes must be a list")
@@ -36,7 +26,7 @@ def validate_graph(graph: dict[str, Any]) -> list[str]:
         key = node.get("id")
         if not isinstance(key, str) or not key or key in by_id:
             raise GraphValidationError("duplicate/invalid node id")
-        if node.get("capability") not in CAPABILITIES:
+        if node.get("capability") not in capabilities:
             raise GraphValidationError(f"unknown capability for node {key}")
         if not isinstance(node.get("inputs"), dict):
             raise GraphValidationError(f"missing input bindings: {key}")
@@ -47,7 +37,7 @@ def validate_graph(graph: dict[str, Any]) -> list[str]:
     adjacency = {k: set() for k in by_id}
     indegree = dict.fromkeys(by_id, 0)
     for key, node in by_id.items():
-        required = CAPABILITIES[node["capability"]]["in"]
+        required = capabilities[node["capability"]]["in"]
         if set(node["inputs"]) != set(required):
             raise GraphValidationError(f"input ports mismatch for {key}")
         for port, expected in required.items():
@@ -62,7 +52,7 @@ def validate_graph(graph: dict[str, Any]) -> list[str]:
                 origin = binding["node"]
                 if origin not in by_id:
                     raise GraphValidationError(f"unknown input node {origin}")
-                actual = CAPABILITIES[by_id[origin]["capability"]]["out"].get(binding["port"])
+                actual = capabilities[by_id[origin]["capability"]]["out"].get(binding["port"])
                 if key not in adjacency[origin]:
                     adjacency[origin].add(key)
                     indegree[key] += 1
@@ -85,7 +75,7 @@ def validate_graph(graph: dict[str, Any]) -> list[str]:
     for key, binding in graph.get("outputs", {}).items():
         if not isinstance(binding, dict) or binding.get("node") not in by_id:
             raise GraphValidationError(f"invalid output binding {key}")
-        ports = CAPABILITIES[by_id[binding["node"]]["capability"]]["out"]
+        ports = capabilities[by_id[binding["node"]]["capability"]]["out"]
         if binding.get("port") not in ports:
             raise GraphValidationError(f"unknown output port {key}")
     return order
@@ -125,5 +115,5 @@ def selected_outputs(graph: dict, outputs: dict) -> dict:
     return {name: outputs[b["node"]][b["port"]] for name, b in graph["outputs"].items()}
 
 
-def due_nodes(graph: dict, completed: set[str], running: set[str]) -> list[str]:
-    return [n for n in validate_graph(graph) if n not in completed and n not in running and dependencies(graph, n) <= completed]
+def due_nodes(graph: dict, completed: set[str], running: set[str], manifest:dict|None=None) -> list[str]:
+    return [n for n in validate_graph(graph,manifest) if n not in completed and n not in running and dependencies(graph, n) <= completed]

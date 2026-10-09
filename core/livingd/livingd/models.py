@@ -138,7 +138,7 @@ def selection(db,scope:str)->dict:
     return {r["purpose"]:r["model_id"] for r in rows}
 
 def select_model(db,scope:str,purpose:str,model_id:str)->dict:
-    if purpose not in ("answer","compose","default"):
+    if purpose not in ("answer","compose","default","memory"):
         raise ValueError("invalid model purpose")
     available={item["id"] for item in list_models(db,scope)}
     if model_id not in available:raise ValueError("model not advertised by LiteLLM for this credential")

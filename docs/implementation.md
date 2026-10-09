@@ -1,31 +1,53 @@
-# Implementation status
+# Implementation and verification status
 
-## Integrated development slice (v0.29)
+Source and CI, not the conceptual design, determine what is working. This is a development runtime.
 
-The canonical architecture remains [architecture.md](architecture.md). The source now implements the first PostgreSQL event and deterministic DAG graph runtime, with the following experimental paths:
+| Layer | Implemented | Verification / limits |
+|---|---|---|
+| Event processing | Transactional ingress, deduplication, subscribed routing, scoped delivery, causal lineage | Real PostgreSQL; no generalized predicate/attention scorer |
+| Graph executor | DB capability registry and immutable snapshots; typed graphs, grant checks, lease renewal/fencing, bounded retry, cancellation | Real PostgreSQL, multiple executor threads, fresh subprocess, fault injection |
+| Logical workers | Nested `graph.call` activations, durable child output and parent continuation | PostgreSQL nested test; bounded depth, no independent agent roles |
+| External effects | OCI Python broker with no-network sandbox; effect ledger, uncertainty and manual reconciliation | Real Docker isolation; no automatic exactly-once effect guarantee |
+| Models | LiteLLM `/v1/models` discovery and text chat; encrypted DB key and model policy | Mock-compatible LiteLLM; **no verified live provider** |
+| DSH | Single guarded DSH tool bridge; profile patch disables stock agent loop | Mocked `ctx.tools.execute`; **no verified upstream DSH installation** |
+| Memory | DB text search, evidence, typed entities/relations/conflicts, optional model candidate extraction + approval | PostgreSQL+mock inference; semantic embeddings, advanced consolidation absent |
+| Control | Bearer principals/grants; scoped action catalog; typed capability & graph publication | API/integration tests; one-text-action constraint and local-only auth |
+| Interfaces | Dynamic CLI/TUI/Web view, MCP resources/tools and durable task handles | Automated clients; no broad MCP host/mobile renderer interoperability |
+| Goals | Persisted goals and one-time scheduled wake events | PostgreSQL test; no goal-generating autonomous planner |
 
-- Database-owned versioned memories with direct evidence links, scoped full-text retrieval, and event-triggered attention leading to reviewable candidates. Interpretation and contradiction adjudication are not autonomous.
-- An input dispatcher driven by seeded PostgreSQL intent rules, plus validated, read-only graph proposals published as dynamic actions with immutable revisions.
-- A model node calls a PostgreSQL-configured LiteLLM gateway; CI uses a mock LiteLLM `/v1/models` and `/v1/chat/completions` service.
-- One dynamically discovered action catalog used by HTTP, CLI, TUI, web workspace and MCP tool projection.
-- A separate OCI broker can execute Python without networking or filesystem mounts, with a real Docker isolation CI job; the core never mounts the deployment engine socket.
-- The PostgreSQL routing, node scheduling, step fencing, and durable activation state remain the existing runtime's foundation.
+## Running the development stack
 
-## Explicitly not implemented
+```sh
+python3 scripts/init-local-secrets.py
+docker compose -f compose.yaml -f compose.local-db.yaml up --build -d
+python3 scripts/smoke.py
+```
 
-Unbounded/general-purpose graph synthesis (the model-assisted composer is type- and capability-restricted); semantic model-based memory extraction and contradiction adjudication; general multi-language OCI toolchains (Python execution through a separate broker is implemented); mature MCP session handling and MCP Apps; production authentication and per-user authorization; autonomous lifelong learning.
+Open `http://127.0.0.1:8080` and paste the local Control token from `.private/living_control_token` in the GUI. CLI/TUI clients read that file. Keep the server on loopback. The generated `.private/living_seal_key` decrypts PostgreSQL-stored integration keys; the DB connection string is also a bootstrap secret.
 
-CI uses real PostgreSQL and a mock LiteLLM model gateway. It verifies model discovery, selection and encrypted key storage, but does not establish that a real LiteLLM provider is connected. The single DSH bundle is an optional tool bridge; provider credentials do not reside in DSH.
+The GUI configures a LiteLLM gateway and discovers its models. LiteLLM itself is **not launched by this Compose file**. DSH must be installed and its tool bridge configured separately. Do not pass Docker's host socket to `livingd`; the OCI broker must be isolated on another engine.
 
-## Test
+### Control contract
 
-Run `python -m unittest discover -s tests -p 'test_full_system.py' -v` with `LIVING_TEST_DATABASE_URL` set, or review GitHub Actions logs for the PostgreSQL integration job.
-## Live smoke test
+- `POST /v1/inputs`: create user event; `GET /v1/events/{id}`: inspect causal descendants, activation states and terminal result.
+- `GET /v1/control/catalog`: scope-and-grant filtered actions; `POST /v1/control/capabilities` and `POST /v1/control/graphs`: scoped admin definitions.
+- `GET /v1/control/handles/{id}`, `POST /v1/control/handles/{id}/cancel`: inspect/cancel durable work.
+- `GET|POST /v1/goals`, `POST /v1/goals/{id}/cancel`, `GET|POST /v1/schedule`: durable activity and wakeups.
+- `GET|POST /v1/settings/litellm`, `GET /v1/models`, `GET|POST /v1/models/selection`: database-owned inference settings.
+- `GET|POST /v1/memory/attention/policy`, `GET /v1/memory/candidates`, `GET /v1/memory/conflicts`: evidence review.
+- `GET /v1/control/effects`, `POST /v1/control/effects/{id}/reconcile`: explicit resolution of uncertain external effects.
+- `POST /mcp`: stateless agent projection; MCP Tasks are scoped persistent handles.
 
-With the development core running, use `python scripts/smoke.py`. The same test runs in CI with real PostgreSQL and verifies HTTP, memory, graph composition, the Control catalog, MCP and web serving.
+## CI gates
 
-## LiteLLM model nodes and credentials
+A merge requires all checks green on **the same PR SHA**, then separately on the resulting `main` commit:
 
-A model invocation reads the scope's LiteLLM gateway and encrypted virtual key from PostgreSQL, discovers available model IDs from the proxy, chooses the stored model policy for the task, and calls LiteLLM directly. The GUI provides a database-defined gateway form and model selection view; the local Control endpoints are described in the root README.
+1. Pure contracts, authenticated HTTP smoke, PostgreSQL migrations and integration tests (event/delivery, scoped access, dynamic graph registration, causally aggregated outputs, memory, goal wakeup, nested graph, long-execution leases, stale worker, restart, concurrency, MCP task/cancel and effect reconciliation).
+2. Real Docker/OCI sandbox smoke test.
+3. Nix package and OCI image boot smoke test.
 
-The optional single DSH plugin executes tool calls through the DSH tool runtime, not model inference. CI verifies that boundary using a mocked DSH tool registry. The encryption root and database connection string remain bootstrap secrets outside the encrypted database. Real LiteLLM deployment and production authentication remain unverified.
+The LiteLLM and DSH models/tools are mocked for repeatability. Passing these jobs does **not** establish a running real LiteLLM provider, a deployed DSH host, native interfaces, general semantic learning or production security.
+
+## Remaining engineering and research
+
+Production identity/key rotation, tenant-aware resource/cost budgets and audit; richer graph matching/validation and multimodal schemas; robust async effect idempotency/reconciliation; live upstream model/DSH integration; persistent semantic memory indexing and consolidation; universal interface renderer; open-ended goal composition and self-directed improvement. These are not implemented, regardless of other tests passing.

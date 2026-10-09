@@ -4,10 +4,12 @@ import json
 import os
 import urllib.request
 BASE=os.getenv("LIVING_URL","http://127.0.0.1:8080").rstrip("/")
+from pathlib import Path
+TOKEN=os.getenv("LIVING_BOOTSTRAP_TOKEN") or (Path(".private/living_control_token").read_text().strip() if Path(".private/living_control_token").is_file() else "")
 def api(path,body=None):
     data=None if body is None else json.dumps(body).encode()
     req=urllib.request.Request(BASE+path,data=data,
-        headers={"Content-Type":"application/json"},method="POST" if body is not None else "GET")
+        headers={"Content-Type":"application/json","Authorization":"Bearer "+TOKEN},method="POST" if body is not None else "GET")
     with urllib.request.urlopen(req,timeout=20) as response:return json.load(response)
 def main():
     while True:
