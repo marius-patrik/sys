@@ -144,7 +144,7 @@ def execute_registered(capability:str,args:dict,scope:str,cause:int|None,manifes
             target=visible_graph(db,args["revision"],scope)
             if not parent or not target:raise ValueError("nested graph unavailable in this scope")
             if parent["depth"]>=parent["max_depth"]:raise ValueError("nested graph depth exceeded")
-            manifest=catalog(db)
+            manifest=catalog(db,scope)
             validate_graph(target["definition"],manifest)
             if target["definition"].get("inputs")!={"text":"text"}:raise ValueError("child needs a text input")
             for node in target["definition"]["nodes"]:

@@ -299,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                     rows=db.execute("SELECT id,goal_id,action_id,due_at,state FROM scheduled_events WHERE scope_id=%s ORDER BY due_at LIMIT 100",(scope,)).fetchall()
                 return self.respond(200,{'scheduled':rows})
             if self.path == '/v1/control/capabilities':
-                with connect() as db: entries=catalog(db)
+                with connect() as db: entries=catalog(db,scope)
                 exposed={k:{'revision':v['revision'],'inputs':v['in'],'outputs':v['out'],
                             'effect':v['effect'],'requiredGrants':v['grants']}
                          for k,v in entries.items() if set(v['grants'])<=set(principal['grants'])}
@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
                     actions=db.execute('SELECT id,title,graph_revision,input_name,revision FROM control_actions WHERE enabled AND (scope_id IS NULL OR scope_id=%s) ORDER BY id',(scope,)).fetchall()
                     graph_rows=db.execute("SELECT id,definition FROM graph_revisions WHERE id=ANY(%s)",([a['graph_revision'] for a in actions],)).fetchall()
                     graphs={r['id']:r['definition'] for r in graph_rows}
-                    manifest=catalog(db)
+                    manifest=catalog(db,scope)
                 grants=set(principal['grants'])
                 actions=[a for a in actions if all(
                     n['capability'] in manifest and set(manifest[n['capability']]['grants'])<=grants

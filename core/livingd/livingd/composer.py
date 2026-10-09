@@ -23,7 +23,7 @@ def dispatch(scope: str, text: str) -> tuple[str,str]:
     if not action: raise ValueError("no enabled generic answering graph")
     return action["id"],text
 
-def candidate_graph(prompt: str) -> dict:
+def candidate_graph(prompt: str,scope:str='*') -> dict:
     """Compose a fresh graph from typed existing capabilities; no effects."""
     if not isinstance(prompt,str) or not prompt.strip() or len(prompt)>2000:
         raise ValueError("invalid composition goal")
@@ -39,11 +39,11 @@ def candidate_graph(prompt: str) -> dict:
       ],
       "outputs":{"view":{"node":"result","port":"view"}}
     }
-    validate_graph(proposal,catalog())
+    validate_graph(proposal,catalog(scope=scope))
     return proposal
 
-def safe_manifest(manifest=None):
-    entries=catalog() if manifest is None else manifest
+def safe_manifest(manifest=None,scope:str='*'):
+    entries=catalog(scope=scope) if manifest is None else manifest
     return {name:entry for name,entry in entries.items()
             if entry["effect"] in ("read","inference")
             and entry["adapter"] in ("pure","memory","model")}
@@ -69,8 +69,8 @@ def propose(scope:str,goal:str,generate=None)->dict:
     ranked=[]
     for row in records:
         definition=row["definition"]
-        validate_graph(definition,catalog())
-        if not _safe(definition):continue
+        validate_graph(definition,catalog(scope=scope))
+        if not _safe(definition,catalog(scope=scope)):continue
         vocabulary=set(row["tags"]) | set(re.findall(r"[a-z0-9]{3,}",row["description"].casefold()))
         score=len(terms & vocabulary)
         if score:ranked.append((score,row["revision_id"],definition))
@@ -82,7 +82,7 @@ def propose(scope:str,goal:str,generate=None)->dict:
         graph=None
         origin="seed"
         if generate is not None:
-            available=safe_manifest()
+            available=safe_manifest(scope=scope)
             instructions=(
               "Return only a JSON object with inputs, nodes and outputs. "
               "Available typed operations: "+json.dumps(available)+
@@ -91,13 +91,13 @@ def propose(scope:str,goal:str,generate=None)->dict:
             try:
                 text=generate(instructions,"Produce a valid bounded graph JSON.")
                 proposal=json.loads(text)
-                validate_graph(proposal,catalog())
-                if len(proposal["nodes"])<=16 and _safe(proposal):
+                validate_graph(proposal,catalog(scope=scope))
+                if len(proposal["nodes"])<=16 and _safe(proposal,catalog(scope=scope)):
                     graph=proposal
                     origin="model"
             except (ValueError,KeyError,TypeError,RuntimeError,OSError):
                 pass
-        if graph is None:graph=candidate_graph(goal)
+        if graph is None:graph=candidate_graph(goal,scope)
     return {"definition":graph,"description":goal,"source":origin,
             "required_capabilities":sorted({n["capability"] for n in graph["nodes"]})}
 
@@ -105,7 +105,7 @@ def install(db, proposal:dict, scope:str, event_id:int) -> str:
     """Immutable, validated, content-addressed graph revision."""
     import hashlib
     graph=proposal["definition"]
-    manifest=catalog(db)
+    manifest=catalog(db,scope)
     validate_graph(graph,manifest)
     if not _safe(graph,manifest):
         raise ValueError("composed graph requires read-only, typed input/output ports")

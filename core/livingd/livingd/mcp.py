@@ -20,7 +20,7 @@ def actions(principal):
         """,(principal["scope_id"],)).fetchall()
         graphs=db.execute("SELECT id,definition FROM graph_revisions WHERE id=ANY(%s)",
                           ([a["graph_revision"] for a in rows],)).fetchall()
-        manifest=catalog(db)
+        manifest=catalog(db,principal["scope_id"])
     graphmap={g["id"]:g["definition"] for g in graphs}
     grants=set(principal["grants"])
     return [a for a in rows if all(

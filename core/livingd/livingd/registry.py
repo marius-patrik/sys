@@ -53,13 +53,15 @@ def seeds():
        "adapter":row[3],"config":row[4],"effect":row[5],"grants":row[6],"revision":1}
        for row in SEED_CAPABILITIES}
 
-def catalog(db=None)->dict:
+def catalog(db=None,scope:str="*")->dict:
+    """Return global capabilities and the current scope's overrides only."""
     if db is None:
-        with connect() as local: return catalog(local)
+        with connect() as local:return catalog(local,scope)
     rows=db.execute("""
         SELECT DISTINCT ON (id) id,revision,input_ports,output_ports,adapter,adapter_config,effect,required_grants
-        FROM capability_registry WHERE active ORDER BY id,revision DESC
-    """).fetchall()
+        FROM capability_registry WHERE active AND scope_id IN ('*',%s)
+        ORDER BY id,(scope_id=%s) DESC,revision DESC
+    """,(scope,scope)).fetchall()
     result={}
     for r in rows:
         if r["adapter"] not in ADAPTERS:continue

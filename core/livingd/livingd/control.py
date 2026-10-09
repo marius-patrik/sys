@@ -41,16 +41,20 @@ def register_capability(db,principal:dict,data:dict)->dict:
                                "in":inputs,"out":outputs,
                                "effect":effect,"grants":grants})
     if not set(grants)<=set(principal["grants"]):raise PermissionError("requested capability escalates privileges")
-    row=db.execute("SELECT max(revision) version FROM capability_registry WHERE id=%s",(name,)).fetchone()
+    scope=principal["scope_id"]
+    # Scoped definitions must not shadow built-in global operations.
+    if db.execute("SELECT 1 FROM capability_registry WHERE scope_id='*' AND id=%s LIMIT 1",(name,)).fetchone():
+        raise ValueError("cannot replace a global capability")
+    row=db.execute("SELECT max(revision) version FROM capability_registry WHERE scope_id=%s AND id=%s",(scope,name)).fetchone()
     expected=(row["version"] or 0)+1
     if row["version"] is not None and "revision" not in data:
         raise ValueError("an explicit revision is required to publish an update")
     version=data.get("revision",expected)
     if version!=expected:raise ValueError("capability revision must be next version")
     db.execute("""
-      INSERT INTO capability_registry(id,revision,input_ports,output_ports,adapter,adapter_config,effect,required_grants)
-      VALUES(%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s,%s)
-    """,(name,version,json.dumps(inputs),json.dumps(outputs),adapter,json.dumps(config),effect,grants))
+      INSERT INTO capability_registry(scope_id,id,revision,input_ports,output_ports,adapter,adapter_config,effect,required_grants)
+      VALUES(%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s,%s)
+    """,(scope,name,version,json.dumps(inputs),json.dumps(outputs),adapter,json.dumps(config),effect,grants))
     return {"id":name,"revision":version}
 
 def register_graph(db,principal:dict,data:dict)->dict:
@@ -58,7 +62,7 @@ def register_graph(db,principal:dict,data:dict)->dict:
     if not isinstance(graph,dict):raise ValueError("graph definition required")
     if graph.get("inputs")!={"text":"text"} or set(graph.get("outputs",{}))!={"view"}:
         raise ValueError("Control actions require text input and view output")
-    manifest=catalog(db)
+    manifest=catalog(db,principal["scope_id"])
     validate_graph(graph,manifest)
     for node in graph["nodes"]:
         entry=manifest[node["capability"]]
