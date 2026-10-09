@@ -92,7 +92,7 @@ def deliver_once() -> bool:
         try:
             if graph is None or not isinstance(value,str):
                 raise ValueError("missing graph or invalid text")
-            manifest=catalog(db)
+            manifest=catalog(db,row["scope_id"])
             validate_graph(graph["definition"],manifest)
             principal=db.execute("SELECT grants FROM control_principals WHERE id=%s AND enabled",(row["principal_id"],)).fetchone()
             if not principal:raise ValueError("event has no valid principal")
@@ -136,7 +136,7 @@ def _claim_node():
         """).fetchall()
         for a in activations:
             g = a["definition"]
-            manifest=a["capability_pins"] or catalog(db)
+            manifest=a["capability_pins"] or catalog(db,a["scope_id"])
             validate_graph(g,manifest)
             rows = db.execute("SELECT node_id, state, lease_epoch, lease_until,next_attempt_at,result,attempts,child_activation_id FROM node_runs WHERE activation_id=%s", (a["id"],)).fetchall()
             for running_child in (r for r in rows if r["state"]=="awaiting_child"):
@@ -300,7 +300,7 @@ def node_once() -> bool:
                 target=visible_graph(db,spec["revision"],task["scope_id"])
                 if not parent or not target or parent["depth"]>=parent["max_depth"]:
                     raise ValueError("invalid nested graph activation")
-                child_manifest=catalog(db)
+                child_manifest=catalog(db,task["scope_id"])
                 validate_graph(target["definition"],child_manifest)
                 if target["definition"].get("inputs")!={"text":"text"}:
                     raise ValueError("nested graph needs text input")

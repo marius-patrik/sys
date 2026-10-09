@@ -17,7 +17,7 @@ def schedule(db,principal,goal_id,action_id,text,due_at):
     from .registry import catalog,authorize
     from .logic import validate_graph
     graph=db.execute("SELECT definition FROM graph_revisions WHERE id=%s",(action["graph_revision"],)).fetchone()
-    manifest=catalog(db)
+    manifest=catalog(db,principal["scope_id"])
     validate_graph(graph["definition"],manifest)
     for node in graph["definition"]["nodes"]:
         authorize(principal["scope_id"],manifest[node["capability"]],set(principal["grants"]))

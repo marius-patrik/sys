@@ -52,3 +52,7 @@ The LiteLLM **proxy itself is genuine** and its upstream response is determinist
 ## Remaining engineering and research
 
 Production identity/key rotation, tenant-aware resource/cost budgets and audit; richer graph matching/validation and multimodal schemas; robust async effect idempotency/reconciliation; live upstream model/DSH integration; persistent semantic memory indexing and consolidation; universal interface renderer; open-ended goal composition and self-directed improvement. These are not implemented, regardless of other tests passing.
+
+## Scoped capabilities
+
+Capabilities are resolved from PostgreSQL for the caller's workspace. The built-in interpreter declarations are global; new registered aliases are private to their creating workspace, including during routing, graph execution, composition, and MCP discovery. A workspace cannot replace a built-in alias. Graphs published in one workspace cannot be invoked by nested graph references from another workspace. Historical custom aliases created before scope attribution cannot be safely assigned to an owner; migration 0015 deactivates them and requires authorized republishing. Existing completed activation snapshots remain intact.

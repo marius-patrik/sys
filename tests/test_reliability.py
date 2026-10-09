@@ -426,6 +426,49 @@ class CorrectnessTests(unittest.TestCase):
         self.assertEqual(reply["result"]["status"],"failed")
         self.assertTrue(reply["result"]["result"]["isError"])
 
+    def test_capability_aliases_are_private_to_their_workspace(self):
+        from livingd.control import register_capability, register_graph
+        from livingd.registry import catalog
+        from livingd.logic import GraphValidationError
+        from livingd.database import connect
+        unique=uuid.uuid4().hex
+        left="workspace-left-"+unique
+        right="workspace-right-"+unique
+        alias="test.private."+unique
+        grant=["control.admin"]
+        left_principal={"id":"test-left","scope_id":left,"grants":grant}
+        right_principal={"id":"test-right","scope_id":right,"grants":grant}
+        definition={"inputs":{"text":"text"},
+            "nodes":[
+                {"id":"node","capability":alias,
+                 "inputs":{"value":{"input":"text"}}},
+                {"id":"view","capability":"view.text",
+                 "inputs":{"value":{"node":"node","port":"value"}}}
+            ],"outputs":{"view":{"node":"view","port":"view"}}}
+        def spec(operation):
+            return {"id":alias,"adapter":"pure","config":{"operation":operation},
+                    "inputs":{"value":"text"},"outputs":{"value":"text"},
+                    "effect":"read","grants":[]}
+        with connect() as db:
+            left_entry=register_capability(db,left_principal,spec("upper"))
+            self.assertEqual(left_entry["revision"],1)
+            self.assertIn(alias,catalog(db,left))
+            self.assertNotIn(alias,catalog(db,right))
+            self.assertNotIn(alias,catalog(db))
+            with self.assertRaises(GraphValidationError):
+                register_graph(db,right_principal,{"title":"Cannot use left graph",
+                                                   "definition":definition})
+            reg=register_capability(db,right_principal,spec("echo"))
+            self.assertEqual(reg["revision"],1)
+            self.assertEqual(catalog(db,left)[alias]["config"]["operation"],"upper")
+            self.assertEqual(catalog(db,right)[alias]["config"]["operation"],"echo")
+            own=register_graph(db,right_principal,{"title":"Right-hand scoped graph",
+                                                   "definition":definition})
+            self.assertEqual(own["scope_id"],right)
+            with self.assertRaisesRegex(ValueError,"global capability"):
+                register_capability(db,left_principal,
+                     {**spec("upper"),"id":"text.upper"})
+
     def test_private_nested_graph_cannot_run_in_another_scope(self):
         from livingd.database import connect
         from livingd.engine import ingest, route_once, deliver_once, node_once
