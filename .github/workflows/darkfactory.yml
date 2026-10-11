@@ -1,0 +1,36 @@
+# df-fleet-managed: 1
+# Additive integration: existing project workflows remain unchanged.
+# Customize in separate workflows; hand-editing this one pauses auto-updates.
+name: DarkFactory Runtime
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  darkfactory:
+    name: released-df
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DF_TAG: "v0.3.3"
+      DF_RELEASE_SHA: "8ef2ad17bbfd4d274aef621a427dd20975caaf55"
+      DF_SHA256: "ab7e55bba02cd6b5a48c305ab7089294e7901fa7d91ca803d19d10587ef06672"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install verified released df
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 "https://github.com/marius-patrik/DarkFactory/releases/download/$DF_TAG/df-linux-x64" --output "$RUNNER_TEMP/df"
+          echo "$DF_SHA256  $RUNNER_TEMP/df" | sha256sum --check -
+          chmod +x "$RUNNER_TEMP/df"
+      - name: Verify df detects this repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/df-capabilities"
+          "$RUNNER_TEMP/df" ci matrix --repo "$GITHUB_WORKSPACE" --capabilities-root "$RUNNER_TEMP/df-capabilities" > "$RUNNER_TEMP/df-matrix.json"
+          jq --exit-status '.matrix | type == "array"' "$RUNNER_TEMP/df-matrix.json"
+          jq --raw-output '"Detected packages: \(.packages | length); unresolved actions: \(.gaps | length)"' "$RUNNER_TEMP/df-matrix.json"
