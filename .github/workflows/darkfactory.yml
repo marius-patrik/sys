@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      DF_TAG: "v0.288.0"
-      DF_RELEASE_SHA: "faa1c309dab7c448674500abbd868d03b1917a6f"
-      DF_SHA256: "43027b7022d83504ee4bfe6e9fa72843443401c8ecc0cd01c4a7700dc3e0936c"
+      DF_TAG: "v0.288.1"
+      DF_RELEASE_SHA: "13a9feb64555a8fb2f3ad9cf7e687b7fd1115838"
+      DF_SHA256: "8b4861ba4efcba1cf3378a2ff92a7fbb2d9887cabca6d494c9a58c7f95514ffd"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install complete verified released df
