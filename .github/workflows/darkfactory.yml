@@ -1,6 +1,6 @@
-# df-fleet-managed: 1
-# Additive integration: existing project workflows remain unchanged.
-# Customize in separate workflows; hand-editing this one pauses auto-updates.
+# df-fleet-managed: 2
+# This managed workflow is additive; existing consumer CI remains intact.
+# User edits pause automated updates rather than being overwritten.
 name: DarkFactory Runtime
 on:
   push:
@@ -14,23 +14,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      DF_TAG: "v0.3.3"
-      DF_RELEASE_SHA: "8ef2ad17bbfd4d274aef621a427dd20975caaf55"
-      DF_SHA256: "ab7e55bba02cd6b5a48c305ab7089294e7901fa7d91ca803d19d10587ef06672"
+      DF_TAG: "v0.288.0"
+      DF_RELEASE_SHA: "faa1c309dab7c448674500abbd868d03b1917a6f"
+      DF_SHA256: "43027b7022d83504ee4bfe6e9fa72843443401c8ecc0cd01c4a7700dc3e0936c"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Install verified released df
+      - name: Install complete verified released df
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --silent --show-error --retry 3 "https://github.com/marius-patrik/DarkFactory/releases/download/$DF_TAG/df-linux-x64" --output "$RUNNER_TEMP/df"
-          echo "$DF_SHA256  $RUNNER_TEMP/df" | sha256sum --check -
-          chmod +x "$RUNNER_TEMP/df"
-      - name: Verify df detects this repository
+          curl --fail --location --silent --show-error --retry 3 "https://github.com/marius-patrik/DarkFactory/releases/download/$DF_TAG/df-linux-x64.tar.gz" --output "$RUNNER_TEMP/df-runtime.tar.gz"
+          echo "$DF_SHA256  $RUNNER_TEMP/df-runtime.tar.gz" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/df-runtime"
+          tar -xzf "$RUNNER_TEMP/df-runtime.tar.gz" -C "$RUNNER_TEMP/df-runtime"
+          chmod +x "$RUNNER_TEMP/df-runtime/df-linux-x64"
+      - name: Verify df detects this repository using its official capabilities
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/df-capabilities"
-          "$RUNNER_TEMP/df" ci matrix --repo "$GITHUB_WORKSPACE" --capabilities-root "$RUNNER_TEMP/df-capabilities" > "$RUNNER_TEMP/df-matrix.json"
+          "$RUNNER_TEMP/df-runtime/df-linux-x64" ci matrix --repo "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/df-matrix.json"
           jq --exit-status '.matrix | type == "array"' "$RUNNER_TEMP/df-matrix.json"
-          jq --raw-output '"Detected packages: \(.packages | length); unresolved actions: \(.gaps | length)"' "$RUNNER_TEMP/df-matrix.json"
+          jq --raw-output '"Detected packages: (.packages | length); unresolved actions: (.gaps | length)"' "$RUNNER_TEMP/df-matrix.json"
