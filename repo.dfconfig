@@ -11,7 +11,7 @@
     },
     "upstream": {
       "repo": "marius-patrik/DarkFactory",
-      "ref": "ebc3a54a1dde15319969d1582c8b927b18a00808"
+      "ref": "34f3c26db2134c10a46285524dfbe45ba83b04c4"
     },
     "board": {
       "global": "Global",
