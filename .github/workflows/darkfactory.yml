@@ -1,37 +1,30 @@
-# df-fleet-managed: 2
-# This managed workflow is additive; existing consumer CI remains intact.
-# User edits pause automated updates rather than being overwritten.
+# df-control-bridge: 1
+# GitHub requires issues, workflow_dispatch and schedules on the default branch.
+# Configuration and executable workflows reside on this repository's default branch.
 name: DarkFactory Runtime
 on:
   push:
+    branches: [main]
   pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  issues:
+    types: [opened, labeled, unlabeled, closed, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
   workflow_dispatch:
+  schedule:
+    - cron: "43 5 * * *"
 permissions:
-  contents: read
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+  repository-projects: write
 jobs:
-  darkfactory:
-    name: released-df
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      DF_TAG: "v0.288.1"
-      DF_RELEASE_SHA: "13a9feb64555a8fb2f3ad9cf7e687b7fd1115838"
-      DF_SHA256: "8b4861ba4efcba1cf3378a2ff92a7fbb2d9887cabca6d494c9a58c7f95514ffd"
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Install complete verified released df
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --location --silent --show-error --retry 3 "https://github.com/marius-patrik/DarkFactory/releases/download/$DF_TAG/df-linux-x64.tar.gz" --output "$RUNNER_TEMP/df-runtime.tar.gz"
-          echo "$DF_SHA256  $RUNNER_TEMP/df-runtime.tar.gz" | sha256sum --check -
-          mkdir -p "$RUNNER_TEMP/df-runtime"
-          tar -xzf "$RUNNER_TEMP/df-runtime.tar.gz" -C "$RUNNER_TEMP/df-runtime"
-          chmod +x "$RUNNER_TEMP/df-runtime/df-linux-x64"
-      - name: Verify df detects this repository using its official capabilities
-        shell: bash
-        run: |
-          set -euo pipefail
-          "$RUNNER_TEMP/df-runtime/df-linux-x64" ci matrix --repo "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/df-matrix.json"
-          jq --exit-status '.matrix | type == "array"' "$RUNNER_TEMP/df-matrix.json"
-          jq --raw-output '"Detected packages: (.packages | length); unresolved actions: (.gaps | length)"' "$RUNNER_TEMP/df-matrix.json"
+  governed:
+    uses: ./.github/workflows/darkfactory-control.yml
+    secrets: inherit

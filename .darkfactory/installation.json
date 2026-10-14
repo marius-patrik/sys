@@ -1,0 +1,15 @@
+{
+  "managedBy": "DarkFactory",
+  "schema": 2,
+  "slug": "marius-patrik/sys",
+  "sourceBranch": "main",
+  "release": {
+    "tag": "v0.291.4",
+    "sha": "4eb98c408eada7edd6366e46897fc54ea6b42ec1",
+    "digest": "94d9c6282fdf2a2d893c0519ca8eac5729f04353d63c11c34b4944d365aeed54"
+  },
+  "fileHashes": {
+    "repo.dfconfig": "3f6fec7640a81e95d1f2d30129208999cb88f90014f88501a413726234ae46e1",
+    ".github/workflows/darkfactory-control.yml": "97b6dc2c2ac292e18b36271e2fae1326c54d4ed5ab1114590637c21c3f124321"
+  }
+}
